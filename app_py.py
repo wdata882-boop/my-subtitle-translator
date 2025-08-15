@@ -14,7 +14,6 @@ import json
 import time
 import os
 from moviepy.editor import VideoFileClip # For extracting audio from video
-import streamlit as st
 
 try:
     ASSEMBLYAI_API_KEY = st.secrets["assemblyai_api_key"] 
@@ -272,16 +271,3 @@ elif option == 'Upload SRT File (Experimental)':
 
 st.markdown("---")
 st.markdown("Developed with ❤️ using AssemblyAI and Streamlit.")
-
-
-# Save your Streamlit app code to a file named app.py
-# (The entire app.py code from step 4 is implicitly put here)
-with open('app.py', 'w') as f:
-    f.write("""
-    # Paste your ENTIRE Streamlit app.py code here from step 4.
-    # This is a placeholder for the actual code.
-    # The content from step 4 should replace this multi-line string.
-    # I'm not duplicating the large code block here again for brevity.
-    """)
-    # !!! IMPORTANT: Replace the above multi-line string with the FULL app.py code from step 4 !!!
-
