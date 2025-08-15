@@ -183,7 +183,8 @@ option = st.radio(
 # Temporary directory for uploaded files
 if not os.path.exists("temp"):
     os.makedirs("temp")
-
+    
+# --- Video File Upload Section ---
 if option == 'Upload Video File':
     uploaded_file = st.file_uploader("Upload a video file (e.g., MP4, MOV)", type=["mp4", "mov", "avi", "mkv"])
     if uploaded_file is not None:
@@ -193,35 +194,40 @@ if option == 'Upload Video File':
         temp_video_path = os.path.join("temp", uploaded_file.name)
         with open(temp_video_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
-
+        
         st.info(f"Processing '{uploaded_file.name}'...")
-        st.spinner("Extracting audio and uploading to AssemblyAI...")
-
-        temp_audio_path = extract_audio_from_video(temp_video_path)
-
+        
+        # --- PROMPT: အောက်ပါ code block ကို အစားထိုး ထည့်သွင်းပါ။ ---
+        with st.spinner("Extracting audio..."):
+            temp_audio_path = extract_audio_from_video(temp_video_path)
+        
         if temp_audio_path:
-            audio_upload_url = upload_file_to_assemblyai(temp_audio_path)
+            st.info("Audio extracted. Uploading to AssemblyAI...")
+            with st.spinner("Uploading audio to AssemblyAI..."):
+                audio_upload_url = upload_file_to_assemblyai(temp_audio_path)
 
             if audio_upload_url:
                 st.success("Audio uploaded successfully to AssemblyAI!")
+                st.write(f"**Debug: Uploaded Audio URL:** `{audio_upload_url}`") # URL ကို မြင်ရအောင် ထုတ်ပြမယ်
                 st.info("Submitting for transcription and translation to English...")
 
-                transcript_id = submit_for_transcription_and_translation(audio_upload_url)
-
+                with st.spinner("Submitting transcription job..."):
+                    transcript_id = submit_for_transcription_and_translation(audio_upload_url)
+                
                 if transcript_id:
                     st.info(f"Transcription Job ID: {transcript_id}. This may take a few minutes...")
-
+                    
                     with st.spinner('Translating and generating SRT...'):
                         result = get_transcript_result(transcript_id)
-
+                        
                         if result and result["status"] == "completed":
                             st.success("Translation completed!")
                             srt_content = generate_srt_from_translation(transcript_id)
-
+                            
                             if srt_content:
                                 st.subheader("Generated English SRT:")
                                 st.text_area("SRT Content", srt_content, height=300)
-
+                                
                                 st.download_button(
                                     label="Download English SRT",
                                     data=srt_content,
@@ -231,11 +237,18 @@ if option == 'Upload Video File':
                             else:
                                 st.error("Failed to generate SRT content.")
                         else:
-                            st.error("Transcription or Translation process failed.")
-
-            if os.path.exists(temp_audio_path):
-                os.remove(temp_audio_path)
-
+                            st.error("Transcription or Translation process failed. Please check logs for details.")
+                else:
+                    st.error("Failed to get a transcription ID from AssemblyAI. Check API Key and request details.")
+            else:
+                st.error("Failed to upload audio to AssemblyAI. Cannot proceed with transcription.")
+        else:
+            st.error("Failed to extract audio from the video. Please check video file format or size.")
+        
+        # Clean up temporary files
+        if os.path.exists(temp_audio_path):
+            os.remove(temp_audio_path)
+        
         if os.path.exists(temp_video_path):
             os.remove(temp_video_path)
 
