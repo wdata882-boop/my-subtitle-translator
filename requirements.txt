@@ -1,3 +1,11 @@
 streamlit
-requests
-moviepy==1.0.1
+moviepy
+openai-whisper
+# PyTorch is a dependency of Whisper, but often installed automatically.
+# If you face issues, you can specify it:
+# torch==2.3.1 # Or a compatible version for your environment
+# torchvision==0.18.1 # If you need it for other tasks (Whisper may not require this)
+
+# FFmpeg is a system dependency required by moviepy and Whisper for audio/video processing.
+# Streamlit Cloud requires specifying system dependencies.
+# This will be handled in .streamlit/packages.txt, NOT in requirements.txt.
