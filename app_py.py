@@ -14,7 +14,6 @@ import json
 import time
 import os
 from moviepy.editor import VideoFileClip # For extracting audio from video
-from google.colab import userdata # To access Colab Secrets
 import streamlit as st
 
 try:
