@@ -273,5 +273,3 @@ with open('app.py', 'w') as f:
     """)
     # !!! IMPORTANT: Replace the above multi-line string with the FULL app.py code from step 4 !!!
 
-# Run Streamlit app in the background
-!streamlit run app.py &>/dev/null&
