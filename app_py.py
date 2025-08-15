@@ -7,8 +7,6 @@ Original file is located at
     https://colab.research.google.com/drive/1qZko9zcrVpAT_EdWSXGEbwcwr4Rflk9p
 """
 
-!pip install requests streamlit moviepy
-
 # === app.py Code (Full Version) ===
 import streamlit as st
 import requests
