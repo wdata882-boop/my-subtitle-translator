@@ -7,7 +7,7 @@ Original file is located at
     https://colab.research.google.com/drive/1qZko9zcrVpAT_EdWSXGEbwcwr4Rflk9p
 """
 
-!pip install requests streamlit moviepy pyngrok
+!pip install requests streamlit moviepy
 
 # === app.py Code (Full Version) ===
 import streamlit as st
@@ -33,8 +33,6 @@ headers = {
     "authorization": ASSEMBLYAI_API_KEY,
     "content-type": "application/json"
 }
-
-!ngrok authtoken 31JefKCx0DFbe3QaRcDkgif69O3_5C5QUB3BA325s2A53wx9D
 
 # --- Functions ---
 
@@ -279,8 +277,3 @@ with open('app.py', 'w') as f:
 
 # Run Streamlit app in the background
 !streamlit run app.py &>/dev/null&
-
-# Create a public URL using ngrok
-from pyngrok import ngrok
-public_url = ngrok.connect(8501) # Streamlit default port is 8501
-print(f"Your Streamlit app is live at: {public_url}")
