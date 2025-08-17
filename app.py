@@ -79,12 +79,12 @@ def extract_audio_ffmpeg(input_path: str, output_path: str, sr: int = 16000) -> 
 # ----------------------------
 st.set_page_config(layout="centered", page_title="Universal Subtitle Translator")
 st.title("Universal Subtitle Translator")
-st.subheader("Translate with AI (Myanmar Language Support!)")
+st.subheader("Translate with AI!") # Removed Myanmar language specific text
 
 st.markdown("""
     This app uses the **Faster-Whisper** model to generate word-level timestamps, 
     and then converts them into a standard SRT subtitle file.
-    It supports multiple languages, including Myanmar.
+    It supports multiple languages.
     
     **Features:**
     - Supports various audio/video formats (mp3, mp4, wav, m4a, flac, mov, avi, mkv).
@@ -105,7 +105,8 @@ st.sidebar.info(f"Using {model_size} model. Larger models are more accurate but 
 st.sidebar.header("Subtitle Settings")
 bucket_seconds = st.sidebar.slider("Max Subtitle Duration (seconds)", min_value=1.0, max_value=10.0, value=3.0, step=0.5)
 max_chars = st.sidebar.slider("Max Characters per Subtitle Line", min_value=10, max_value=100, value=50, step=5)
-lang_hint = st.sidebar.text_input("Language Hint (e.g., 'my' for Burmese, 'en' for English, 'auto' for auto-detect)", value="auto")
+# Changed default value to 'en' for English and removed Myanmar hint
+lang_hint = st.sidebar.text_input("Language Hint (e.g., 'en' for English, 'auto' for auto-detect)", value="en")
 
 st.markdown("---")
 
@@ -191,6 +192,108 @@ def bucket_words_by_duration(words, bucket_seconds=3, max_chars_per_sub=50):
 # Streamlit UI Flow
 # ----------------------------
 def main():
-    # Initialize temp_audio_path at the beginning of the function
+    # Initialize temp_audio_path and temp_input_path at the beginning of the function
+    # This helps ensure they are always defined for cleanup in the finally block
     temp_audio_path = None 
-    temp_input_path = None # Also initialize temp_input_path for cleanup
+    temp_input_path = None 
+    temp_dir = None # Initialize temp_dir as well
+
+    uploaded = st.file_uploader("Upload Audio/Video", type=["mp3", "mp4", "wav", "m4a", "flac", "mov", "avi", "mkv"])
+
+    try:
+        if uploaded:
+            st.success("File uploaded successfully!")
+            
+            # Create a temporary directory for all temporary files
+            temp_dir = tempfile.mkdtemp()
+            st.info(f"Temporary directory created at: {temp_dir}")
+            
+            file_extension = uploaded.name.split('.')[-1].lower()
+            temp_input_path = os.path.join(temp_dir, f"{uuid.uuid4()}.{file_extension}")
+            
+            with open(temp_input_path, "wb") as f:
+                f.write(uploaded.getbuffer())
+
+            st.info(f"Processing uploaded file: {uploaded.name}")
+
+            # Extract audio if it's a video file
+            if file_extension in ["mp4", "mov", "avi", "mkv"]:
+                st.info("Video file detected. Extracting audio...")
+                if ensure_ffmpeg():
+                    with st.spinner("Extracting audio..."):
+                        # Output audio file will also be in the temp_dir
+                        temp_audio_path = extract_audio_ffmpeg(temp_input_path, os.path.join(temp_dir, f"{uuid.uuid4()}.wav"))
+                        if not temp_audio_path:
+                            st.error("Failed to extract audio from the video. Please check file format and FFmpeg installation.")
+                            return # Stop execution to prevent further errors
+                else:
+                    st.error("FFmpeg is required to extract audio from video files. Please ensure it's installed and accessible.")
+                    return # Stop execution to prevent further errors
+            elif file_extension in ["mp3", "wav", "m4a", "flac"]:
+                temp_audio_path = temp_input_path # If it's an audio file, treat it directly as audio path
+            else:
+                st.error("Unsupported file format. Please upload an audio (mp3, wav, m4a, flac) or video (mp4, mov, avi, mkv) file.")
+                return # Stop execution to prevent further errors
+            
+            if temp_audio_path: # temp_audio_path is now guaranteed to be defined if we reach here
+                # Load model
+                with st.spinner(f"Loading Faster-Whisper model: {model_size} ..."):
+                    model = load_model(model_size=model_size)
+
+                # Transcribe
+                with st.spinner("Transcribing (word timestamps enabled)... This may take a while."):
+                    lang = lang_hint.strip() if lang_hint.strip() != "auto" else None # If 'auto', let Whisper detect
+                    words = transcribe_words(temp_audio_path, model, lang=lang)
+                    if not words:
+                        st.error("No words were detected. Please try a clearer audio or a different model size.")
+                        return # Stop execution to prevent further errors
+
+                # Build SRT by duration buckets
+                with st.spinner("Building SRT by fixed duration..."):\
+                    srt_text = bucket_words_by_duration(words, bucket_seconds=bucket_seconds, max_chars_per_sub=max_chars)
+
+                st.success("Done!")
+                st.subheader("Preview (SRT)")
+                st.text_area("SRT Content", srt_text, height=320)
+
+                # Prepare for download
+                base_name = os.path.splitext(uploaded.name)[0]
+                dl_name = f"{base_name}_duration_{int(bucket_seconds*1000)}ms.srt"
+                st.download_button(
+                    "Download SRT",
+                    data=srt_text.encode("utf-8"),
+                    file_name=dl_name,
+                    mime="text/plain"
+                )
+
+        else:
+            st.info("Upload an audio or video file to get started!")
+
+    finally:
+        # Final cleanup for all temporary files and directory
+        # This block runs after processing, even if errors occurred (except for st.stop() paths, which we replaced with return)
+        if temp_audio_path and os.path.exists(temp_audio_path):
+            try:
+                os.remove(temp_audio_path)
+                st.info(f"Cleaned up temporary audio file: {temp_audio_path}")
+            except OSError as e:
+                st.warning(f"Could not remove temporary audio file {temp_audio_path}: {e}")
+        
+        if temp_input_path and os.path.exists(temp_input_path):
+            try:
+                os.remove(temp_input_path)
+                st.info(f"Cleaned up temporary input file: {temp_input_path}")
+            except OSError as e:
+                st.warning(f"Could not remove temporary input file {temp_input_path}: {e}")
+        
+        if temp_dir and os.path.exists(temp_dir):
+            try:
+                os.rmdir(temp_dir) # Use rmdir only if directory is empty
+                st.info(f"Cleaned up temporary directory: {temp_dir}")
+            except OSError as e:
+                # If directory is not empty (e.g., if model was downloaded there by mistake)
+                st.warning(f"Could not remove temporary directory {temp_dir}. It might not be empty: {e}")
+
+
+if __name__ == "__main__":
+    main()
