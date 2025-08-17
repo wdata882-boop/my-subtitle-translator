@@ -29,9 +29,24 @@ def ensure_ffmpeg():
     Checks if ffmpeg is available in the system's PATH.
     """
     try:
-        subprocess.run(["ffmpeg", "-version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        # Capture stderr and stdout to see if there's any output
+        result = subprocess.run(["ffmpeg", "-version"], 
+                                stdout=subprocess.PIPE, 
+                                stderr=subprocess.PIPE, 
+                                check=True)
+        st.success(f"FFmpeg found: {result.stdout.decode().splitlines()[0]}")
         return True
-    except Exception:
+    except subprocess.CalledProcessError as e:
+        # If ffmpeg command exists but returns an error
+        st.error(f"FFmpeg command failed with error: {e.stderr.decode()}")
+        return False
+    except FileNotFoundError:
+        # This is the original "ffmpeg not found" error
+        st.error("FFmpeg not found in system's PATH. Please ensure it's installed correctly.")
+        return False
+    except Exception as e:
+        # Catch any other unexpected errors
+        st.error(f"An unexpected error occurred while checking FFmpeg: {e}")
         return False
 
 
