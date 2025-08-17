@@ -18,9 +18,12 @@ import whisper
 def extract_audio_from_video(video_path, audio_output_path="temp_audio.mp3"):
     """Extracts audio from a video file using pydub and ffmpeg."""
     try:
-        # Load the video file
-        # pydub can directly load video files if ffmpeg is correctly set up
-        audio = AudioSegment.from_file(video_path)
+        # Get the file extension to specify format for pydub
+        file_extension = os.path.splitext(video_path)[1].lstrip('.') # e.g., 'mp4', 'mov'
+
+        # Load the video file using pydub
+        # Specify the format explicitly for robustness
+        audio = AudioSegment.from_file(video_path, format=file_extension) # <-- ADDED format=file_extension
 
         # Export audio to MP3 format
         audio.export(audio_output_path, format="mp3")
