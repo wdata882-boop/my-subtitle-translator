@@ -11,7 +11,7 @@ import requests # Still useful for general web requests, though not for AAI now
 import json # Still useful
 import time # Still useful
 import os
-from moviepy import VideoFileClip
+from moviepy.editor import VideoFileClip
 import whisper
 
 
