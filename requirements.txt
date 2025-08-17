@@ -1,6 +1,8 @@
 streamlit
 moviepy
 openai-whisper
+numba==0.56.4
+llvmlite==0.39.1
 # PyTorch is a dependency of Whisper, but often installed automatically.
 # If you face issues, you can specify it:
 # torch==2.3.1 # Or a compatible version for your environment
