@@ -179,16 +179,16 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Initialize temp paths
+# Initialize temp paths globally or before the main logic
+# These lines should be already present and correct
 temp_video_path = None
 temp_audio_path = None
 
-# Model size selection
+# Model size selection and other UI elements
 model_size = st.selectbox("Choose Whisper Model Size (smaller is faster):", ["tiny", "base", "small"], index=0)
 lang_hint = st.text_input("Source Language Hint (e.g., 'Burmese', leave blank for auto-detect):", value="")
 bucket_seconds = st.slider("Max Subtitle Duration (seconds):", min_value=1.0, max_value=10.0, value=3.0, step=0.5)
 max_chars = st.slider("Max Characters Per Subtitle Line:", min_value=20, max_value=80, value=40, step=5)
-
 
 uploaded = st.file_uploader("Upload an audio or video file", type=["mp4", "mov", "avi", "mkv", "mp3", "wav", "m4a"])
 
@@ -206,25 +206,35 @@ if uploaded is not None:
     mime_type = uploaded.type
     is_video = mime_type.startswith("video/")
 
+    # Initialize wav_path. If it's an audio file, it's the temp_file_path itself.
+    # If it's a video, temp_audio_path will be generated.
+    wav_path = temp_file_path 
+
     # 2. Extract audio if it's a video
-    wav_path = temp_file_path # Assume it's audio initially
     if is_video:
-        temp_audio_path = os.path.join("temp", f"{uuid.uuid4()}.wav") # Use a unique name for audio
+        # Define temp_audio_path only if it's a video and we need to extract audio
+        temp_audio_path = os.path.join("temp", f"{uuid.uuid4()}.wav") # This defines temp_audio_path
         with st.spinner("Extracting audio from video..."):
             try:
+                # Call ffmpeg to extract audio
                 extract_audio_ffmpeg(temp_file_path, temp_audio_path)
-                wav_path = temp_audio_path
+                wav_path = temp_audio_path # Now wav_path points to the extracted audio
             except Exception as e:
                 st.error(f"Error during audio extraction: {e}. Please try another file or ensure FFmpeg is correctly set up.")
-                # Clean up temp files before stopping
+                # Clean up temp files if extraction fails
                 os.remove(temp_file_path)
-                if os.path.exists(temp_audio_path):
+                # Only try to remove temp_audio_path if it was actually defined (i.e., if it was a video)
+                if os.path.exists(temp_audio_path): # This check is now safe as temp_audio_path is defined above
                     os.remove(temp_audio_path)
                 st.stop() # Stop further execution if audio extraction fails
     
     # Ensure FFmpeg is available (this check is important after file upload)
     if not ensure_ffmpeg():
         st.error("FFmpeg not found. Please ensure it's installed correctly on the server.")
+        # Clean up temp files before stopping
+        os.remove(temp_file_path)
+        if is_video and os.path.exists(temp_audio_path): # temp_audio_path needs to be defined for this line to be safe
+            os.remove(temp_audio_path)
         st.stop()
 
     # Load model
@@ -245,7 +255,7 @@ if uploaded is not None:
             st.stop()
 
     # Build SRT by duration buckets
-    with st.spinner("Building SRT by fixed duration..."):\
+    with st.spinner("Building SRT by fixed duration..."):
         srt_text = bucket_words_by_duration(words, bucket_seconds=bucket_seconds, max_chars_per_sub=max_chars)
 
     st.success("Done!")
@@ -264,7 +274,7 @@ if uploaded is not None:
 
     # Clean up temporary files finally
     os.remove(temp_file_path)
-    if is_video and os.path.exists(temp_audio_path):
+    if is_video and os.path.exists(temp_audio_path): # This is where temp_audio_path might be undefined if it was an audio file originally
         os.remove(temp_audio_path)
 
 st.markdown("---")
