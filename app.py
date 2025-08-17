@@ -5,33 +5,19 @@ import math
 import tempfile
 import subprocess
 from datetime import timedelta
+
 import streamlit as st
+
+# Use faster-whisper for word-level timestamps
+# pip install faster-whisper
 from faster_whisper import WhisperModel
-import ffmpeg_python as ffmpeg
 
-# ----------------------------
-# Constants and UI Configuration
-# ----------------------------
-
-# Set Streamlit page configuration
-st.set_page_config(
-    page_title="ရုပ်ရှင် သို့မဟုတ် ဗီဒီယို ဖိုင်များမှ စာတန်းထိုးများ ဖန်တီးပါ။",
-    page_icon="🎬",
-    layout="wide",
-)
-
-st.title("🎬 ဇာတ်ကား သို့မဟုတ် ဗီဒီယိုမှ စာတန်းထိုးများ ဖန်တီးရန်")
-st.markdown("အောက်ပါ အချက်အလက်များအတိုင်း ဗီဒီယို သို့မဟုတ် အသံဖိုင်မှ စာတန်းထိုးဖိုင် (SRT) ကို အလိုအလျောက် ထုတ်ပေးနိုင်ပါတယ်။")
 
 # ----------------------------
 # Helpers
 # ----------------------------
-
 def hhmmss_ms(seconds: float) -> str:
-    """
-    SRT time format HH:MM:SS,mmm
-    Converts a float number of seconds into an SRT-formatted timestamp string.
-    """
+    # SRT time format HH:MM:SS,mmm
     ms = int(round((seconds - int(seconds)) * 1000))
     total = int(seconds)
     h = total // 3600
@@ -45,240 +31,166 @@ def ensure_ffmpeg():
     Checks if ffmpeg is available in the system's PATH.
     """
     try:
-        subprocess.run(["ffmpeg", "-version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        # Use shell=True to potentially help with PATH issues in some environments
+        result = subprocess.run(["ffmpeg", "-version"],
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                check=True,
+                                shell=True)
+        st.success(f"FFmpeg found: {result.stdout.decode().splitlines()[0]}")
         return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except subprocess.CalledProcessError as e:
+        # If ffmpeg command exists but returns an error
+        st.error(f"FFmpeg command failed with error: {e.stderr.decode()}")
+        return False
+    except FileNotFoundError:
+        # This is the original "ffmpeg not found" error
+        st.error("FFmpeg not found in system's PATH. Please ensure it's installed correctly.")
+        return False
+    except Exception as e:
+        # Catch any other unexpected errors
+        st.error(f"An unexpected error occurred while checking FFmpeg: {e}")
         return False
 
-
-def extract_audio_ffmpeg(input_path: str, output_path: str, sr: int = 16000) -> None:
+def extract_audio_ffmpeg(input_path: str, output_path: str, sr: int = 16000) -> str:
     """
-    Uses ffmpeg to extract mono WAV audio @16kHz for transcription stability.
+    Use ffmpeg to extract mono wav @16kHz for transcription stability.
+    Returns the path to the extracted audio file.
     """
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", input_path,
+        "-vn", # No video
+        "-acodec", "pcm_s16le", # PCM 16-bit signed-integer little-endian
+        "-ar", str(sr), # Audio sample rate
+        "-ac", "1", # Audio channels (1 for mono)
+        output_path
+    ]
     try:
-        # Construct the ffmpeg command using the ffmpeg-python library
-        stream = ffmpeg.input(input_path)
-        stream = ffmpeg.output(stream, output_path, acodec='pcm_s16le', ac=1, ar=sr)
-        ffmpeg.run(stream, overwrite_output=True, quiet=True)
-    except ffmpeg.Error as e:
-        st.error(f"Error extracting audio: {e.stderr.decode('utf-8')}")
-        raise
-
-
-def load_model(model_size: str = "base"):
-    """
-    Loads the Faster-Whisper model, using Streamlit's persistent cache.
-    This resolves the 'read-only file system' error.
-    """
-    try:
-        # Use Streamlit's recommended persistent cache location
-        model_cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "faster-whisper-models")
-        os.makedirs(model_cache_dir, exist_ok=True)
-        st.info(f"Model cache directory: {model_cache_dir}")
-        model = WhisperModel(model_size, device="cpu", compute_type="int8", download_root=model_cache_dir)
-        return model
-    except Exception as e:
-        st.error(f"Error loading model: {e}")
-        st.stop()
-
-
-def transcribe_words(audio_path: str, model: WhisperModel, lang: str = None):
-    """
-    Transcribes audio to get word-level timestamps using faster-whisper.
-    """
-    try:
-        segments, info = model.transcribe(audio_path, language=lang, word_timestamps=True, beam_size=5)
-        st.info(f"Detected language: {info.language} with probability {info.language_probability:.4f}")
-        all_words = []
-        for segment in segments:
-            if segment.words:
-                all_words.extend(segment.words)
-        return all_words
-    except Exception as e:
-        st.error(f"Transcription failed: {e}")
-        return None
-
-
-def bucket_words_by_duration(words, bucket_seconds: float, max_chars_per_sub: int) -> str:
-    """
-    Builds an SRT string by grouping words into time-based buckets.
-    Ensures that each subtitle line doesn't exceed a maximum character count.
-    """
-    srt_text = ""
-    current_bucket = []
-    current_bucket_end = 0.0
-    subtitle_index = 1
-
-    for word in words:
-        if word.start >= current_bucket_end:
-            # New bucket
-            if current_bucket:
-                # Add previous bucket to SRT
-                start_time = current_bucket[0].start
-                end_time = current_bucket[-1].end
-                text = " ".join([w.word.strip() for w in current_bucket])
-                if len(text) > max_chars_per_sub:
-                    # If the subtitle is too long, split it
-                    words_in_text = text.split()
-                    temp_line = ""
-                    for i, w in enumerate(words_in_text):
-                        if len(temp_line) + len(w) + 1 > max_chars_per_sub and temp_line:
-                            srt_text += f"{subtitle_index}\n"
-                            srt_text += f"{hhmmss_ms(start_time)} --> {hhmmss_ms(current_bucket[i-1].end)}\n"
-                            srt_text += temp_line.strip() + "\n\n"
-                            subtitle_index += 1
-                            temp_line = w
-                            start_time = current_bucket[i].start
-                        else:
-                            temp_line += " " + w if temp_line else w
-                    if temp_line:
-                        srt_text += f"{subtitle_index}\n"
-                        srt_text += f"{hhmmss_ms(start_time)} --> {hhmmss_ms(end_time)}\n"
-                        srt_text += temp_line.strip() + "\n\n"
-                        subtitle_index += 1
-                else:
-                    srt_text += f"{subtitle_index}\n"
-                    srt_text += f"{hhmmss_ms(start_time)} --> {hhmmss_ms(end_time)}\n"
-                    srt_text += text.strip() + "\n\n"
-                    subtitle_index += 1
-                current_bucket = []
-
-            # Start a new bucket
-            bucket_start_time = math.floor(word.start / bucket_seconds) * bucket_seconds
-            current_bucket_end = bucket_start_time + bucket_seconds
-        
-        current_bucket.append(word)
-
-    # Add the last remaining bucket
-    if current_bucket:
-        start_time = current_bucket[0].start
-        end_time = current_bucket[-1].end
-        text = " ".join([w.word.strip() for w in current_bucket])
-        if len(text) > max_chars_per_sub:
-            words_in_text = text.split()
-            temp_line = ""
-            for i, w in enumerate(words_in_text):
-                if len(temp_line) + len(w) + 1 > max_chars_per_sub and temp_line:
-                    srt_text += f"{subtitle_index}\n"
-                    srt_text += f"{hhmmss_ms(start_time)} --> {hhmmss_ms(current_bucket[i-1].end)}\n"
-                    srt_text += temp_line.strip() + "\n\n"
-                    subtitle_index += 1
-                    temp_line = w
-                    start_time = current_bucket[i].start
-                else:
-                    temp_line += " " + w if temp_line else w
-            if temp_line:
-                srt_text += f"{subtitle_index}\n"
-                srt_text += f"{hhmmss_ms(start_time)} --> {hhmmss_ms(end_time)}\n"
-                srt_text += temp_line.strip() + "\n\n"
-        else:
-            srt_text += f"{subtitle_index}\n"
-            srt_text += f"{hhmmss_ms(start_time)} --> {hhmmss_ms(end_time)}\n"
-            srt_text += text.strip() + "\n\n"
-
-    return srt_text
-
+        # Use shell=True for audio extraction as well
+        subprocess.run(cmd, check=True, capture_output=True, shell=True)
+        return output_path
+    except subprocess.CalledProcessError as e:
+        st.error(f"Error extracting audio: {e.stderr.decode()}")
+        return None # Return None on failure
 
 # ----------------------------
-# Streamlit App UI and Logic
+# Main App
 # ----------------------------
+st.set_page_config(layout="centered", page_title="Universal Subtitle Translator")
+st.title("Universal Subtitle Translator")
+st.subheader("Translate with AI (Myanmar Language Support!)")
 
-st.sidebar.header("ချိန်ညှိမှုများ")
-# File uploader
-uploaded_file = st.sidebar.file_uploader(
-    "ဗီဒီယို သို့မဟုတ် အသံဖိုင် တင်ပါ။ (MP4, MKV, MP3, WAV)",
-    type=["mp4", "mkv", "mp3", "wav"],
-)
-
-# Model size selection
-model_size = st.sidebar.selectbox(
-    "အသံ မှတ်သားဖို့အတွက် မော်ဒယ်အရွယ်အစား",
-    ("base", "small", "medium"),
-    index=0
-)
-st.sidebar.markdown("""
-**မော်ဒယ်ရွေးချယ်မှုအကြောင်း:**
-* `base`: အသေးဆုံးနှင့် အမြန်ဆုံး။
-* `small`: အတော်အသင့် အရွယ်အစားနှင့် ပိုမိုတိကျသည်။
-* `medium`: အကြီးဆုံး၊ အနှေးဆုံးနှင့် အတိကျဆုံး။
+st.markdown("""
+    This app uses the **Faster-Whisper** model to generate word-level timestamps, 
+    and then converts them into a standard SRT subtitle file.
+    It supports multiple languages, including Myanmar.
+    
+    **Features:**
+    - Supports various audio/video formats (mp3, mp4, wav, m4a, flac, mov, avi, mkv).
+    - Uses Faster-Whisper for accurate transcription.
+    - Generates SRT files with customizable subtitle duration and max characters per line.
+    - Automatic language detection or manual hint.
 """)
 
-# Language hint
-lang_hint = st.sidebar.text_input(
-    "ဘာသာစကား အရိပ်အမြွက် (ဥပမာ: en, my, ja)"
-)
-st.sidebar.markdown("ဘာသာစကားကို မသိရင် လွတ်ထားပါ။")
+st.markdown("---")
 
+# Model selection
+st.sidebar.header("Model Settings")
+model_size_options = ["tiny", "base", "small", "medium", "large"]
+model_size = st.sidebar.selectbox("Choose Whisper Model Size", model_size_options, index=1)
+st.sidebar.info(f"Using {model_size} model. Larger models are more accurate but require more time and memory.")
 
-# Transcription parameters
-bucket_seconds = st.sidebar.slider(
-    "တစ်ကြောင်းအတွက် စက္ကန့်အများဆုံး",
-    min_value=1.0,
-    max_value=10.0,
-    value=4.0,
-    step=0.5,
-    help="Each subtitle entry will cover a maximum of this duration."
-)
+# Subtitle generation settings
+st.sidebar.header("Subtitle Settings")
+bucket_seconds = st.sidebar.slider("Max Subtitle Duration (seconds)", min_value=1.0, max_value=10.0, value=3.0, step=0.5)
+max_chars = st.sidebar.slider("Max Characters per Subtitle Line", min_value=10, max_value=100, value=50, step=5)
+lang_hint = st.sidebar.text_input("Language Hint (e.g., 'my' for Burmese, 'en' for English, 'auto' for auto-detect)", value="auto")
 
-max_chars = st.sidebar.slider(
-    "တစ်ကြောင်းအတွက် စာလုံးအများဆုံး",
-    min_value=20,
-    max_value=120,
-    value=40,
-    step=5,
-    help="The maximum number of characters allowed in a single subtitle line. Longer subtitles will be split into multiple lines."
-)
+st.markdown("---")
 
-# Main processing logic
-if uploaded_file is not None:
-    st.info("ဖိုင်ကို လက်ခံရရှိပါပြီ။ စတင်လုပ်ဆောင်ပါမည်။")
+def load_model(model_size="base"):
+    # Load model from Streamlit's default cache directory (persistent storage)
+    # Streamlit Cloud recommends using "~/.cache" for persistent storage
+    # Get the home directory first
+    home_dir = os.path.expanduser("~")
+    model_cache_dir = os.path.join(home_dir, ".cache", "faster-whisper-models")
+    
+    # Ensure the cache directory exists
+    os.makedirs(model_cache_dir, exist_ok=True)
+    
+    st.info(f"Using model cache directory: {model_cache_dir}")
 
-    # Save uploaded file to a temporary location
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_video_path = os.path.join(temp_dir, uploaded_file.name)
-        with open(temp_video_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
+    # Faster-Whisper's default download_root puts model files directly in it.
+    # So we just pass the model_cache_dir as download_root.
+    st.info(f"Loading model from cache or downloading to: {model_cache_dir} (This may take a while for larger models)...")
+    model = WhisperModel(model_size, device="cpu", compute_type="int8", download_root=model_cache_dir)
+    return model
 
-        # Check if ffmpeg is available
-        if not ensure_ffmpeg():
-            st.error("FFmpeg ကို မတွေ့ရှိပါ။ ကျေးဇူးပြု၍ FFmpeg ကို ထည့်သွင်းပါ။")
-            st.stop()
-        
-        # Extract audio from video
-        temp_audio_path = os.path.join(temp_dir, "audio.wav")
-        with st.spinner("အသံဖိုင်ကို ထုတ်ယူနေသည်..."):
-            try:
-                extract_audio_ffmpeg(temp_video_path, temp_audio_path)
-            except Exception as e:
-                st.error(f"အသံထုတ်ယူမှု မအောင်မြင်ပါ- {e}")
-                st.stop()
-            
-        # Load model
-        with st.spinner(f"မော်ဒယ် {model_size} ကို တင်နေသည်..."):
-            model = load_model(model_size=model_size)
+def transcribe_words(audio_path, model, lang=None):
+    segments, info = model.transcribe(audio_path, word_timestamps=True, language=lang)
+    words = []
+    for segment in segments:
+        for word in segment.words:
+            words.append({"start": word.start, "end": word.end, "word": word.word})
+    return words
 
-        # Transcribe
-        with st.spinner("စာသားပြောင်းလဲမှု (စကားလုံးအချိန်မှတ်များဖြင့်)... အချိန်အနည်းငယ် ကြာနိုင်ပါတယ်။"):
-            lang = lang_hint.strip() if lang_hint.strip() else None
-            words = transcribe_words(temp_audio_path, model, lang=lang)
-            if not words:
-                st.error("စကားလုံးများ မတွေ့ရှိပါ။ ပိုမိုရှင်းလင်းသော အသံဖိုင် သို့မဟုတ် မတူညီသော မော်ဒယ်အရွယ်အစားကို စမ်းကြည့်ပါ။")
-                st.stop()
+def bucket_words_by_duration(words, bucket_seconds=3, max_chars_per_sub=50):
+    srt_content = []
+    current_bucket = []
+    current_duration = 0
+    current_chars = 0
+    sub_idx = 1
 
-        # Build SRT by duration buckets
-        with st.spinner("သတ်မှတ်ထားသော စက္ကန့်အတိုင်း SRT ဖန်တီးနေသည်..."):
-            srt_text = bucket_words_by_duration(words, bucket_seconds=bucket_seconds, max_chars_per_sub=max_chars)
-        
-        st.success("ပြီးပါပြီ။")
-        st.subheader("အမြည်း (SRT)")
-        st.text_area("SRT Content", srt_text, height=320)
+    for word_data in words:
+        word = word_data["word"]
+        word_start = word_data["start"]
+        word_end = word_data["end"]
 
-        base_name = os.path.splitext(uploaded_file.name)[0]
-        dl_name = f"{base_name}_duration_{int(bucket_seconds*1000)}ms.srt"
-        st.download_button(
-            "SRT ဖိုင်ကို ဒေါင်းလုဒ်လုပ်ပါ။",
-            data=srt_text.encode("utf-8"),
-            file_name=dl_name,
-            mime="text/plain",
-        )
+        # Check if adding this word exceeds max duration or max characters
+        # If current_bucket is empty, this is the start of a new subtitle
+        if not current_bucket:
+            bucket_start = word_start
+            current_bucket.append(word_data)
+            current_duration = word_end - word_start
+            current_chars = len(word)
+        else:
+            potential_duration = word_end - bucket_start
+            potential_chars = current_chars + len(word) + (1 if current_bucket else 0) # +1 for space
 
+            # If adding this word exceeds limits, finalize current bucket
+            if potential_duration > bucket_seconds or potential_chars > max_chars:
+                # Finalize current subtitle
+                sub_start = hhmmss_ms(bucket_start)
+                sub_end = hhmmss_ms(current_bucket[-1]["end"])
+                text = " ".join([w["word"] for w in current_bucket]).strip()
+                srt_content.append(f"{sub_idx}\n{sub_start} --> {sub_end}\n{text}\n")
+                sub_idx += 1
+
+                # Start new bucket with current word
+                current_bucket = [word_data]
+                bucket_start = word_start
+                current_duration = word_end - word_start
+                current_chars = len(word)
+            else:
+                # Add word to current bucket
+                current_bucket.append(word_data)
+                current_duration = potential_duration
+                current_chars = potential_chars
+
+    # Add any remaining words in the last bucket
+    if current_bucket:
+        sub_start = hhmmss_ms(bucket_start)
+        sub_end = hhmmss_ms(current_bucket[-1]["end"])
+        text = " ".join([w["word"] for w in current_bucket]).strip()
+        srt_content.append(f"{sub_idx}\n{sub_start} --> {sub_end}\n{text}\n")
+
+    return "\n".join(srt_content)
+
+# ----------------------------
+# Streamlit UI Flow
+# ----------------------------
+def main():
+    # Initialize temp_audio_path at the beginning of the function
+    temp_audio_path = None 
+    temp_input_path = None # Also initialize temp_input_path for cleanup
