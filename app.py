@@ -3,6 +3,7 @@ import os
 import uuid
 import math
 import tempfile
+import subprocess # For calling ffmpeg directly
 from datetime import timedelta
 
 import streamlit as st
@@ -11,9 +12,9 @@ import streamlit as st
 # pip install faster-whisper
 from faster_whisper import WhisperModel
 
-# Use moviepy for video audio extraction
-# pip install moviepy
-from moviepy.editor import VideoFileClip
+# Use pydub for audio manipulation (requires ffmpeg)
+# pip install pydub
+from pydub import AudioSegment
 
 # ----------------------------
 # Helpers
@@ -27,19 +28,42 @@ def hhmmss_ms(seconds: float) -> str:
     s = total % 60
     return f"{h:02}:{m:02}:{s:02},{ms:03}"
 
-def extract_audio_from_video(video_path: str, output_path: str, sr: int = 16000) -> str:
+def ensure_ffmpeg():
+    """Checks if ffmpeg is installed and accessible in the system PATH."""
+    try:
+        # Using subprocess to run 'ffmpeg -version' and check for success
+        # stdout and stderr are redirected to DEVNULL to avoid printing to console
+        # check=True raises CalledProcessError if the command returns a non-zero exit code
+        subprocess.run(["ffmpeg", "-version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        return True
+    except FileNotFoundError:
+        st.error("FFmpeg not found. FFmpeg is required to extract audio from video files. Please ensure it's installed and accessible in your system PATH.")
+        return False
+    except subprocess.CalledProcessError:
+        st.error("FFmpeg command failed. There might be an issue with your FFmpeg installation.")
+        return False
+    except Exception as e:
+        st.error(f"An unexpected error occurred while checking FFmpeg: {e}")
+        return False
+
+def extract_audio_pydub(input_path: str, output_path: str, sr: int = 16000) -> str:
     """
-    Use moviepy to extract mono wav @16kHz from video.
+    Use pydub to extract mono wav @16kHz for transcription stability.
+    Requires FFmpeg to be installed and accessible in the system PATH.
     Returns the path to the extracted audio file.
     """
     try:
-        with VideoFileClip(video_path) as video:
-            audio = video.audio
-            # Ensure audio is mono and at 16kHz
-            audio.write_audiofile(output_path, fps=sr, nbytes=2, buffersize=2000, codec='pcm_s16le')
+        # Load the audio/video file
+        audio = AudioSegment.from_file(input_path)
+        
+        # Set frame rate to 16kHz and channels to mono (1)
+        audio = audio.set_frame_rate(sr).set_channels(1)
+        
+        # Export as WAV (pydub automatically uses ffmpeg for this)
+        audio.export(output_path, format="wav")
         return output_path
     except Exception as e:
-        st.error(f"Error extracting audio with MoviePy: {e}")
+        st.error(f"Error extracting audio with PyDub: {e}. Make sure FFmpeg is correctly installed.")
         return None
 
 # ----------------------------
@@ -52,7 +76,7 @@ st.subheader("Translate with AI!")
 st.markdown("""
     This app uses the **Faster-Whisper** model to generate word-level timestamps, 
     and then converts them into a standard SRT subtitle file.
-    It supports various audio/video formats.
+    It supports various audio/video formats by extracting audio using **FFmpeg** (via PyDub).
     
     **Features:**
     - Supports various audio/video formats (mp3, mp4, wav, m4a, flac, mov, avi, mkv).
@@ -86,6 +110,7 @@ def load_model(model_size="base"):
     st.info(f"Using model cache directory: {model_cache_dir}")
 
     st.info(f"Loading model from cache or downloading to: {model_cache_dir} (This may take a while for larger models)...")
+    # Streamlit Cloud uses CPU, so compute_type='int8' is appropriate
     model = WhisperModel(model_size, device="cpu", compute_type="int8", download_root=model_cache_dir)
     return model
 
@@ -118,21 +143,29 @@ def bucket_words_by_duration(words, bucket_seconds=3, max_chars_per_sub=50):
             potential_duration = word_end - bucket_start
             potential_chars = current_chars + len(word) + (1 if current_bucket else 0)
 
-            if potential_duration > bucket_seconds or potential_chars > max_chars:
+            # Check if adding the current word exceeds duration or character limit
+            # Only add space if it's not the very first word in the bucket
+            text_so_far = " ".join([w["word"] for w in current_bucket])
+            potential_text = (text_so_far + " " + word).strip() if text_so_far else word
+            
+            if potential_duration > bucket_seconds or len(potential_text) > max_chars:
+                # Close current bucket
                 sub_start = hhmmss_ms(bucket_start)
                 sub_end = hhmmss_ms(current_bucket[-1]["end"])
                 text = " ".join([w["word"] for w in current_bucket]).strip()
                 srt_content.append(f"{sub_idx}\n{sub_start} --> {sub_end}\n{text}\n")
                 sub_idx += 1
 
+                # Start a new bucket with the current word
                 current_bucket = [word_data]
                 bucket_start = word_start
                 current_duration = word_end - word_start
                 current_chars = len(word)
             else:
+                # Add word to current bucket
                 current_bucket.append(word_data)
                 current_duration = potential_duration
-                current_chars = potential_chars
+                current_chars = len(potential_text) # Update characters based on potential_text
 
     if current_bucket:
         sub_start = hhmmss_ms(bucket_start)
@@ -149,6 +182,10 @@ def main():
     temp_audio_path = None
     temp_input_path = None
     temp_dir = None
+
+    # Ensure FFmpeg is available at the start
+    if not ensure_ffmpeg():
+        st.stop() # Stop the app if FFmpeg is not found
 
     uploaded = st.file_uploader("Upload Audio/Video", type=["mp3", "mp4", "wav", "m4a", "flac", "mov", "avi", "mkv"])
 
@@ -169,24 +206,27 @@ def main():
 
             # Extract audio if it's a video file or standardize audio for transcription
             if file_extension in ["mp4", "mov", "avi", "mkv"]:
-                st.info("Video file detected. Extracting audio with MoviePy...")
+                st.info("Video file detected. Extracting audio with PyDub (requires FFmpeg)...")
                 with st.spinner("Extracting audio..."):
-                    temp_audio_path = extract_audio_from_video(temp_input_path, os.path.join(temp_dir, f"{uuid.uuid4()}.wav"))
+                    temp_audio_path = extract_audio_pydub(temp_input_path, os.path.join(temp_dir, f"{uuid.uuid4()}.wav"))
                     if not temp_audio_path:
-                        st.error("Failed to extract audio from the video. Please check file format.")
+                        st.error("Failed to extract audio from the video. Please check file format and FFmpeg installation.")
+                        # Do not st.stop() here, let the finally block handle cleanup.
+                        # The function returned None, so transcription won't proceed.
                         return
             elif file_extension in ["mp3", "wav", "m4a", "flac"]:
-                # For audio files, we can just use them directly if they are already suitable
-                # or extract them to a standard WAV format if needed. For simplicity,
-                # let's assume faster-whisper can handle common audio formats,
-                # but if issues arise, we might need to convert them to WAV using moviepy as well.
-                # For now, we'll just pass the input path directly.
-                temp_audio_path = temp_input_path
+                # For audio files, use pydub to ensure 16kHz mono WAV for consistent results
+                st.info("Audio file detected. Standardizing audio to 16kHz mono WAV with PyDub (requires FFmpeg)...")
+                with st.spinner("Processing audio..."):
+                    temp_audio_path = extract_audio_pydub(temp_input_path, os.path.join(temp_dir, f"{uuid.uuid4()}.wav"))
+                    if not temp_audio_path:
+                        st.error("Failed to process audio. Please check file format and FFmpeg installation.")
+                        return
             else:
                 st.error("Unsupported file format. Please upload an audio (mp3, wav, m4a, flac) or video (mp4, mov, avi, mkv) file.")
                 return
             
-            if temp_audio_path:
+            if temp_audio_path: # Proceed only if audio extraction/processing was successful
                 with st.spinner(f"Loading Faster-Whisper model: {model_size} ..."):
                     model = load_model(model_size=model_size)
 
@@ -217,6 +257,7 @@ def main():
             st.info("Upload an audio or video file to get started!")
 
     finally:
+        # Clean up temporary files and directory
         if temp_audio_path and os.path.exists(temp_audio_path):
             try:
                 os.remove(temp_audio_path)
@@ -233,13 +274,11 @@ def main():
         
         if temp_dir and os.path.exists(temp_dir):
             try:
-                # Use shutil.rmtree to remove directory and its contents
                 import shutil
                 shutil.rmtree(temp_dir)
                 st.info(f"Cleaned up temporary directory: {temp_dir}")
             except OSError as e:
                 st.warning(f"Could not remove temporary directory {temp_dir}: {e}")
-
 
 if __name__ == "__main__":
     main()
