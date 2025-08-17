@@ -183,40 +183,42 @@ if option == 'Upload Video File':
         with st.spinner("Extracting audio..."):
             temp_audio_path = extract_audio_from_video(temp_video_path)
         
-        if temp_audio_path:
-            # --- PROMPT: This is where the AssemblyAI logic was, now replaced with Whisper ---
-            st.info("Audio extracted. Processing with Whisper model...")
-            with st.spinner("Transcribing and translating to English with Whisper... This may take a while for large files."):
-                whisper_result = transcribe_and_translate_with_whisper(temp_audio_path, whisper_model)
-            
-            if whisper_result and whisper_result.get("segments"): # Check if segments exist
-                st.success("Transcription and Translation completed with Whisper!")
-                
-                srt_content = generate_srt_from_whisper_segments(whisper_result["segments"])
-                
-                if srt_content:
-                    st.subheader("Generated English SRT:")
-                    st.text_area("SRT Content", srt_content, height=300)
-                    
-                    st.download_button(
-                        label="Download English SRT",
-                        data=srt_content,
-                        file_name=f"{os.path.splitext(uploaded_file.name)[0]}_english.srt",
-                        mime="text/plain"
-                    )
-                else:
-                    st.error("Failed to generate SRT content from Whisper results.")
-            else:
-                st.error("Whisper transcription or translation failed. Please check logs for details.")
+if temp_audio_path:
+    # --- PROMPT: This is where the AssemblyAI logic was, now replaced with Whisper ---
+    st.info("Audio extracted. Processing with Whisper model...")
+    with st.spinner("Transcribing and translating to English with Whisper... This may take a while for large files."):
+        whisper_result = transcribe_and_translate_with_whisper(temp_audio_path, whisper_model)
+
+    if whisper_result and whisper_result.get("segments"): # Check if segments exist
+        st.success("Transcription and Translation completed with Whisper!")
+
+        srt_content = generate_srt_from_whisper_segments(whisper_result["segments"])
+
+        if srt_content:
+            st.subheader("Generated English SRT:")
+            st.text_area("SRT Content", srt_content, height=300)
+
+            st.download_button(
+                label="Download English SRT",
+                data=srt_content,
+                file_name=f"{os.path.splitext(uploaded_file.name)[0]}_english.srt",
+                mime="text/plain"
+            )
         else:
-            st.error("Failed to extract audio from the video. Please check video file format or size.")
-        
-        # Clean up temporary files
-        if os.path.exists(temp_audio_path):
-            os.remove(temp_audio_path)
-        
-        if os.path.exists(temp_video_path):
-            os.remove(temp_video_path)
+            st.error("Failed to generate SRT content from Whisper results.")
+    else:
+        st.error("Whisper transcription or translation failed. Please check logs for details.")
+else:
+    st.error("Failed to extract audio from the video. Please check video file format or size.")
+
+# Clean up temporary files ONLY IF THEY ARE NOT NONE
+if temp_audio_path and os.path.exists(temp_audio_path): # ADD temp_audio_path check FIRST
+    os.remove(temp_audio_path)
+
+# temp_video_path should always be a string if uploaded_file is not None
+# but to be safe, also add a check
+if temp_video_path and os.path.exists(temp_video_path): 
+    os.remove(temp_video_path)
 
 elif option == 'Upload SRT File (Experimental)':
     uploaded_srt_file = st.file_uploader("Upload an SRT file (e.g., .srt)", type=["srt"])
