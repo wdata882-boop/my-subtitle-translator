@@ -1,5 +1,5 @@
 streamlit
-moviepy
+pydub
 openai-whisper
 # torch==2.3.1 # These are likely not needed on Streamlit Cloud, as Whisper uses pre-built models
 # torchvision==0.18.1
