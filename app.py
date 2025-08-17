@@ -14,6 +14,10 @@ import os
 from pydub import AudioSegment
 import whisper
 
+AudioSegment.converter = "/usr/bin/ffmpeg"
+
+if not os.path.exists("temp"):
+    os.makedirs("temp")
 
 def extract_audio_from_video(video_path, audio_output_path="temp_audio.mp3"):
     """Extracts audio from a video file using pydub and ffmpeg."""
