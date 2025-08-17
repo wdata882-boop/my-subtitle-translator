@@ -6,41 +6,13 @@ Original file is located at
     https://colab.research.google.com/drive/1qZko9zcrVpAT_EdWSXGEbwcwr4Rflk9p
 """
 
-# === app.py Code (Full Version - Modified for Whisper) ===
 import streamlit as st
 import requests # Still useful for general web requests, though not for AAI now
 import json # Still useful
 import time # Still useful
 import os
-from moviepy.editor import VideoFileClip # For extracting audio from video
-
-# Import Whisper
-import whisper # This imports the Whisper library
-
-# No API key needed for Whisper local model!
-# Remove the try-except block for ASSEMBLYAI_API_KEY as it's no longer needed.
-# try:
-#     ASSEMBLYAI_API_KEY = st.secrets["assemblyai_api_key"]
-# except KeyError:
-#     st.error("AssemblyAI API Key not found in Streamlit Secrets. Please add it to your Streamlit Cloud app settings.")
-#     st.stop() # Stop the app if key is missing
-
-# Remove AssemblyAI API Endpoints as they are no longer used
-# UPLOAD_ENDPOINT = "https://api.assemblyai.com/v2/upload"
-# TRANSCRIPT_ENDPOINT = "https://api.assemblyai.com/v2/transcript"
-# headers = {
-#     "authorization": ASSEMBLYAI_API_KEY,
-#     "content-type": "application/json"
-# }
-
-
-# --- Functions ---
-
-# Remove AssemblyAI-specific functions
-# def upload_file_to_assemblyai(filepath): ...
-# def submit_for_transcription_and_translation(audio_url): ...
-# def get_transcript_result(transcript_id): ...
-# def generate_srt_from_translation(transcript_id): ...
+from moviepy import VideoFileClip
+import whisper
 
 
 def extract_audio_from_video(video_path, audio_output_path="temp_audio.mp3"):
@@ -149,7 +121,6 @@ def process_srt_file_for_translation(srt_file_path):
         return None
 
 
-# --- Streamlit UI ---
 st.set_page_config(page_title="Universal Subtitle Translator", layout="centered")
 
 st.title("🎬 Universal Subtitle Translator")
@@ -185,18 +156,11 @@ option = st.radio(
     horizontal=True
 )
 
-# Temporary directory for uploaded files
 if not os.path.exists("temp"):
     os.makedirs("temp")
 
-# --- Load Whisper Model at the start of the app ---
-# Choose your model size: "tiny", "base", "small", "medium"
-# "base" is a good balance for Streamlit Free Tier.
-# If you face Memory issues, try "tiny".
-whisper_model = load_whisper_model(model_size="base") # Or "tiny" if base causes memory errors
+whisper_model = load_whisper_model(model_size="tiny") 
 
-
-# --- Video File Upload Section ---
 if option == 'Upload Video File':
     uploaded_file = st.file_uploader("Upload a video file (e.g., MP4, MOV)", type=["mp4", "mov", "avi", "mkv"])
     if uploaded_file is not None:
