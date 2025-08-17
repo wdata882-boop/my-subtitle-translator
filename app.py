@@ -113,8 +113,8 @@ st.markdown("---")
 def load_model(model_size="base"):
     # Load model from Streamlit's default cache directory (persistent storage)
     # Streamlit Cloud recommends using "~/.cache" for persistent storage
-    # Get the home directory first
     home_dir = os.path.expanduser("~")
+    # Ensure this path is correct for Streamlit Cloud's writable cache
     model_cache_dir = os.path.join(home_dir, ".cache", "faster-whisper-models")
     
     # Ensure the cache directory exists
@@ -271,7 +271,6 @@ def main():
 
     finally:
         # Final cleanup for all temporary files and directory
-        # This block runs after processing, even if errors occurred (except for st.stop() paths, which we replaced with return)
         if temp_audio_path and os.path.exists(temp_audio_path):
             try:
                 os.remove(temp_audio_path)
@@ -286,13 +285,17 @@ def main():
             except OSError as e:
                 st.warning(f"Could not remove temporary input file {temp_input_path}: {e}")
         
+        # Only attempt to remove the temp_dir if it was successfully created
         if temp_dir and os.path.exists(temp_dir):
             try:
-                os.rmdir(temp_dir) # Use rmdir only if directory is empty
+                # rmdir only works if the directory is empty.
+                # If there are still files (e.g., model files downloaded there),
+                # it will fail. For Streamlit Cloud, the .cache location is managed
+                # by Streamlit itself for model persistence.
+                os.rmdir(temp_dir) 
                 st.info(f"Cleaned up temporary directory: {temp_dir}")
             except OSError as e:
-                # If directory is not empty (e.g., if model was downloaded there by mistake)
-                st.warning(f"Could not remove temporary directory {temp_dir}. It might not be empty: {e}")
+                st.warning(f"Could not remove temporary directory {temp_dir}. It might not be empty or still in use: {e}")
 
 
 if __name__ == "__main__":
