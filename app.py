@@ -168,6 +168,10 @@ if not os.path.exists("temp"):
 
 whisper_model = load_whisper_model(model_size="tiny") 
 
+# Initialize temp paths outside the conditional block
+temp_video_path = None 
+temp_audio_path = None
+
 if option == 'Upload Video File':
     uploaded_file = st.file_uploader("Upload a video file (e.g., MP4, MOV)", type=["mp4", "mov", "avi", "mkv"])
     if uploaded_file is not None:
@@ -177,11 +181,48 @@ if option == 'Upload Video File':
         temp_video_path = os.path.join("temp", uploaded_file.name)
         with open(temp_video_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
-        
+
         st.info(f"Processing '{uploaded_file.name}'...")
-        
+
         with st.spinner("Extracting audio..."):
             temp_audio_path = extract_audio_from_video(temp_video_path)
+
+        # Now, the 'if temp_audio_path:' block should be inside this 'if uploaded_file is not None:' block
+        # so that temp_audio_path is guaranteed to be defined (either a path or None from extract_audio_from_video)
+        if temp_audio_path: # This line should now be indented to be part of the 'if uploaded_file is not None' block
+            # --- PROMPT: This is where the AssemblyAI logic was, now replaced with Whisper ---
+            st.info("Audio extracted. Processing with Whisper model...")
+            with st.spinner("Transcribing and translating to English with Whisper... This may take a while for large files."):
+                whisper_result = transcribe_and_translate_with_whisper(temp_audio_path, whisper_model)
+
+            if whisper_result and whisper_result.get("segments"): # Check if segments exist
+                st.success("Transcription and Translation completed with Whisper!")
+
+                srt_content = generate_srt_from_whisper_segments(whisper_result["segments"])
+
+                if srt_content:
+                    st.subheader("Generated English SRT:")
+                    st.text_area("SRT Content", srt_content, height=300)
+
+                    st.download_button(
+                        label="Download English SRT",
+                        data=srt_content,
+                        file_name=f"{os.path.splitext(uploaded_file.name)[0]}_english.srt",
+                        mime="text/plain"
+                    )
+                else:
+                    st.error("Failed to generate SRT content from Whisper results.")
+            else:
+                st.error("Whisper transcription or translation failed. Please check logs for details.")
+        else:
+            st.error("Failed to extract audio from the video. Please check video file format or size.")
+
+        # Clean up temporary files (these lines are already correctly placed within the 'if uploaded_file' block)
+        if temp_audio_path and os.path.exists(temp_audio_path): # ADD temp_audio_path check FIRST
+            os.remove(temp_audio_path)
+
+        if temp_video_path and os.path.exists(temp_video_path): 
+            os.remove(temp_video_path)
         
 if temp_audio_path:
     # --- PROMPT: This is where the AssemblyAI logic was, now replaced with Whisper ---
