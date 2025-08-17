@@ -1,1 +1,1 @@
-# my-subtitle-translator
+Subtitle Maker
