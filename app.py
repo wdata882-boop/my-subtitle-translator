@@ -11,19 +11,26 @@ import requests # Still useful for general web requests, though not for AAI now
 import json # Still useful
 import time # Still useful
 import os
-from moviepy.editor import VideoFileClip
+from pydub import AudioSegment
 import whisper
 
 
 def extract_audio_from_video(video_path, audio_output_path="temp_audio.mp3"):
-    """Extracts audio from a video file using moviepy."""
+    """Extracts audio from a video file using pydub and ffmpeg."""
     try:
-        video = VideoFileClip(video_path)
-        video.audio.write_audiofile(audio_output_path)
+        # Load the video file
+        # pydub can directly load video files if ffmpeg is correctly set up
+        audio = AudioSegment.from_file(video_path)
+
+        # Export audio to MP3 format
+        audio.export(audio_output_path, format="mp3")
+
         return audio_output_path
     except Exception as e:
-        st.error(f"Error extracting audio from video: {e}")
+        st.error(f"Error extracting audio from video with pydub: {e}")
+        st.info("Please ensure FFmpeg is correctly installed and accessible in the environment.")
         return None
+
 
 # --- NEW: Whisper-specific functions ---
 
