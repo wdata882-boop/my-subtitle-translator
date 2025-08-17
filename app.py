@@ -25,15 +25,12 @@ def hhmmss_ms(seconds: float) -> str:
 
 
 def ensure_ffmpeg():
-    """
-    Checks if ffmpeg is available in the system's PATH.
-    """
     try:
-        # Capture stderr and stdout to see if there's any output
         result = subprocess.run(["ffmpeg", "-version"], 
                                 stdout=subprocess.PIPE, 
                                 stderr=subprocess.PIPE, 
-                                check=True)
+                                check=True, 
+                                shell=True) 
         st.success(f"FFmpeg found: {result.stdout.decode().splitlines()[0]}")
         return True
     except subprocess.CalledProcessError as e:
@@ -51,9 +48,6 @@ def ensure_ffmpeg():
 
 
 def extract_audio_ffmpeg(input_path: str, output_path: str, sr: int = 16000) -> None:
-    """
-    Use ffmpeg to extract mono wav @16kHz for transcription stability.
-    """
     cmd = [
         "ffmpeg", "-y",
         "-i", input_path,
@@ -65,9 +59,9 @@ def extract_audio_ffmpeg(input_path: str, output_path: str, sr: int = 16000) -> 
         output_path
     ]
     try:
-        subprocess.run(cmd, check=True, capture_output=True)
+        subprocess.run(cmd, check=True, capture_output=True, shell=True) 
     except subprocess.CalledProcessError as e:
-        st.error(f"FFmpeg audio extraction failed: {e.stderr.decode()}")
+        st.error(f"Error extracting audio: {e.stderr.decode()}")
         raise # Re-raise the exception to be caught by the calling function
 
 
