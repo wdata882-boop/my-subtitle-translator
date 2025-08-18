@@ -48,8 +48,8 @@ def load_model(model_size: str):
     st.info(f"Loading Faster-Whisper model: {model_size}. This may take a while for larger models.")
     # For Streamlit Cloud, setting device to "cpu" is generally safer and sufficient.
     # compute_type can be "int8" for CPU for better performance if supported.
-    # CHANGED: Attempting int8_float16 for better precision. Revert to "int8" if OOM error occurs.
-    return WhisperModel(model_size, device="cpu", compute_type="int8_float16") 
+    # CHANGED: Reverted compute_type to "int8" because "int8_float16" is not supported on Streamlit Cloud's CPUs.
+    return WhisperModel(model_size, device="cpu", compute_type="int8") 
 
 @st.cache_resource
 def transcribe_words(_model: WhisperModel, audio_path: str, lang: str = None):
