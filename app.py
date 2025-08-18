@@ -51,12 +51,12 @@ def load_model(model_size: str):
     return WhisperModel(model_size, device="cpu", compute_type="int8")
 
 @st.cache_resource
-def transcribe_words(audio_path: str, model: WhisperModel, lang: str = None):
+def transcribe_words(_model: WhisperModel, audio_path: str, lang: str = None): # CHANGED: Added _ to model
     """
     Transcribes audio using Faster-Whisper with word-level timestamps.
     """
     st.info("Transcribing audio with word-level timestamps...")
-    segments, _ = model.transcribe(
+    segments, _ = _model.transcribe( # CHANGED: Used _model here
         audio_path,
         word_timestamps=True,
         language=lang,
@@ -245,7 +245,8 @@ if uploaded_file is not None:
         # Transcribe
         with st.spinner("Transcribing (word timestamps enabled)... This may take a while depending on audio length and model size."):
             lang = lang_hint.strip() if lang_hint.strip() else None
-            words = transcribe_words(extracted_audio_path, model, lang=lang) # Use extracted_audio_path here
+            # The line below is where the error occurred, now fixed by passing _model
+            words = transcribe_words(_model=model, audio_path=extracted_audio_path, lang=lang) 
             if not words:
                 st.error("No words were detected. Please try a clearer audio or a different model size.")
                 st.stop()
@@ -267,6 +268,3 @@ if uploaded_file is not None:
             file_name=dl_name,
             mime="text/plain"
         )
-    # The temporary directory and its contents (temp_video_path, temp_audio_path)
-    # are automatically cleaned up here by 'with tempfile.TemporaryDirectory()'.
-    # So, explicit os.remove() calls are not strictly necessary as they are managed.
