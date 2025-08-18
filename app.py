@@ -46,8 +46,6 @@ def load_model(model_size: str):
     Loads the Faster-Whisper model. Uses cache for efficiency.
     """
     st.info(f"Loading Faster-Whisper model: {model_size}. This may take a while for larger models.")
-    # For Streamlit Cloud, setting device to "cpu" is generally safer and sufficient.
-    # compute_type is "int8" for CPU for better performance if supported.
     return WhisperModel(model_size, device="cpu", compute_type="int8") 
 
 @st.cache_resource
@@ -58,9 +56,9 @@ def transcribe_words(_model: WhisperModel, audio_path: str, lang: str = None):
     st.info("Transcribing audio with word-level timestamps...")
     segments, _ = _model.transcribe(
         audio_path,
-        word_timestamps=True, # This enables word-level timestamps for precise segmenting
+        word_timestamps=True, 
         language=lang, 
-        beam_size=7 # This influences transcription accuracy and indirectly segmentation quality
+        beam_size=7 
     )
     words = []
     for segment in segments:
@@ -70,97 +68,150 @@ def transcribe_words(_model: WhisperModel, audio_path: str, lang: str = None):
 
 def bucket_words_by_duration(words: list, bucket_seconds: int = 5, max_chars_per_sub: int = 60, min_subtitle_duration: float = 0.5) -> str:
     """
-    Creates SRT content by bucketing words into fixed duration intervals.
-    Attempts to break lines by max_chars_per_sub.
+    Creates SRT content by segmenting based on natural pauses (punctuation)
+    and then falling back to duration/character limits if needed.
     Ensures each subtitle meets a minimum display duration.
     """
     srt_content = []
     subtitle_idx = 1
-    current_bucket_start_time = 0.0
-    current_words_in_bucket = []
+    current_words_in_segment = []
+
+    # Helper to check if a word ends with punctuation
+    def ends_with_punctuation(word_text):
+        # Added common English and Chinese punctuation
+        return word_text.endswith(('.', '?', '!', ',', '。', '？', '！', '，'))
 
     for i, word in enumerate(words):
-        combined_text_length = len(" ".join([w.word for w in current_words_in_bucket] + [word.word]))
+        word_text = word.text # Use word.text for newer faster-whisper versions
 
-        # Conditions to finalize the current subtitle bucket:
-        # 1. Word's start time exceeds the maximum allowed duration for the current bucket.
-        # 2. Combined text length exceeds the maximum characters per subtitle line.
-        # 3. It's the last word in the entire transcription.
-        break_condition = word.start >= current_bucket_start_time + bucket_seconds or \
-                          (combined_text_length > max_chars_per_sub and current_words_in_bucket) or \
-                          i == len(words) - 1
+        current_words_in_segment.append(word)
         
-        if break_condition:
-            if current_words_in_bucket: # Only process if there are words in the current bucket
-                start_time = current_words_in_bucket[0].start
-                end_time = current_words_in_bucket[-1].end
+        # Calculate current segment's properties
+        # Use .text attribute of the Word object
+        segment_text = "".join([w.text for w in current_words_in_segment]).strip()
+        
+        # Ensure there are words in the segment before calculating duration
+        segment_duration = 0.0
+        if current_words_in_segment:
+             segment_duration = current_words_in_segment[-1].end - current_words_in_segment[0].start
+        
+        segment_char_length = len(segment_text)
+
+        # Break conditions:
+        punctuation_break = False
+        if ends_with_punctuation(word_text):
+            # If it's a period/question mark/exclamation mark, prefer to break
+            if word_text.endswith(('.', '?', '!', '。', '？', '！')):
+                punctuation_break = True
+            # If it's a comma, break if segment is reasonably long
+            elif word_text.endswith((',', '，')):
+                if segment_duration >= (min_subtitle_duration + 0.5) or segment_char_length >= (max_chars_per_sub / 2):
+                    punctuation_break = True
+            
+            # Additional check: If the gap to the next word is large, it's a good break point
+            if i < len(words) - 1:
+                next_word_start = words[i+1].start
+                if (next_word_start - word.end) > 0.4: # A significant pause (e.g., 0.4 seconds)
+                    punctuation_break = True
+
+        duration_exceeded = segment_duration >= bucket_seconds
+        chars_exceeded = segment_char_length >= max_chars_per_sub
+        is_last_word = (i == len(words) - 1)
+
+        # Finalize segment if any break condition is met, and it's not too short (unless it's the very last word)
+        should_finalize = False
+        if is_last_word:
+            should_finalize = True
+        elif punctuation_break and segment_duration >= min_subtitle_duration:
+            should_finalize = True
+        elif duration_exceeded and segment_duration >= min_subtitle_duration:
+            should_finalize = True
+        elif chars_exceeded and segment_duration >= min_subtitle_duration: # Prioritize chars_exceeded only if min_duration met
+            should_finalize = True
+        
+        # Special case: If we're forcing a break due to max_chars_per_sub,
+        # ensure it's not an empty string or just spaces
+        if should_finalize and segment_text.strip() == "" and not is_last_word:
+            should_finalize = False # Don't finalize an empty segment
+
+        if should_finalize:
+            if current_words_in_segment:
+                start_time = current_words_in_segment[0].start
+                end_time = current_words_in_segment[-1].end
                 
-                # Ensure minimum duration for the subtitle:
-                # If the natural duration is less than the minimum required, extend the end time.
-                # This prevents very short, flickering subtitles.
+                # Apply minimum duration for display
                 if (end_time - start_time) < min_subtitle_duration:
                     end_time = start_time + min_subtitle_duration
 
-                subtitle_text = " ".join([w.word.strip() for w in current_words_in_bucket]).strip()
+                subtitle_text = "".join([w.text.strip() for w in current_words_in_segment]).strip()
                 
-                # Line breaking logic based on max_chars_per_sub
+                # Line breaking for subtitles that are still too long after segmentation
                 if len(subtitle_text) > max_chars_per_sub:
-                    # Find a good breaking point (e.g., after a space) within the character limit
-                    break_point = subtitle_text.rfind(' ', 0, max_chars_per_sub)
-                    if break_point == -1: # No space found within limit, just break at max_chars
+                    break_point = -1
+                    # Try to break at a punctuation mark within the max_chars limit from the end
+                    for k in range(min(len(subtitle_text) -1, max_chars_per_sub -1), -1, -1):
+                        if subtitle_text[k] in (',', '.', '?', '!', '。', '？', '！', '，'):
+                            break_point = k + 1
+                            break
+                    if break_point == -1: # No punctuation, try last space
+                        break_point = subtitle_text.rfind(' ', 0, max_chars_per_sub)
+                    if break_point == -1: # No space either, force break at max_chars
                         break_point = max_chars_per_sub
+                    
+                    # Ensure break_point doesn't cut in the middle of a word (this is a simplified check)
+                    # For precise word breaking, you'd iterate through word list and split there.
+                    # Current logic aims for visual line breaks after segment is formed.
                     
                     line1 = subtitle_text[:break_point].strip()
                     line2 = subtitle_text[break_point:].strip()
-                    subtitle_text = f"{line1}\n{line2}" # Add newline for 2nd line
+                    subtitle_text_final = f"{line1}\n{line2}"
+                else:
+                    subtitle_text_final = subtitle_text
                 
-                start_time_str = hhmmss_ms(start_time)
-                end_time_str = hhmmss_ms(end_time) # Use potentially extended end_time
+                if subtitle_text_final: # Only add if text is not empty after stripping
+                    start_time_str = hhmmss_ms(start_time)
+                    end_time_str = hhmmss_ms(end_time)
+                    
+                    srt_content.append(f"{subtitle_idx}")
+                    srt_content.append(f"{start_time_str} --> {end_time_str}")
+                    srt_content.append(subtitle_text_final)
+                    srt_content.append("")
+                    subtitle_idx += 1
                 
-                srt_content.append(f"{subtitle_idx}")
-                srt_content.append(f"{start_time_str} --> {end_time_str}")
-                srt_content.append(subtitle_text)
-                srt_content.append("") # Empty line for SRT format
-                subtitle_idx += 1
+                current_words_in_segment = [] # Reset for next segment
 
-            # Start a new bucket with the current word
-            # This logic ensures the next bucket's starting point is calculated correctly.
-            if i == len(words) - 1 and not current_words_in_bucket: # If it's the very last word and it's forming a new bucket alone
-                current_bucket_start_time = word.start
-            elif current_words_in_bucket: # If previous words formed a bucket, start the next interval from their end
-                current_bucket_start_time = math.floor(current_words_in_bucket[-1].end / bucket_seconds) * bucket_seconds
-            else: # Fallback for initial state or if the very first word triggers a break
-                 current_bucket_start_time = math.floor(word.start / bucket_seconds) * bucket_seconds
-
-            current_words_in_bucket = [word] # Add the current word to the new bucket
-        else:
-            current_words_in_bucket.append(word) # Add word to current bucket if no break condition met
-
-    # Handle the very last bucket if any words are left after the loop
-    if current_words_in_bucket and (not srt_content or (srt_content and srt_content[-1] != "")):
-        start_time = current_words_in_bucket[0].start
-        end_time = current_words_in_bucket[-1].end
-        
-        # Apply minimum duration to the last subtitle as well
+    # Final check for any remaining words (should be caught by is_last_word, but as a safeguard)
+    if current_words_in_segment:
+        start_time = current_words_in_segment[0].start
+        end_time = current_words_in_segment[-1].end
         if (end_time - start_time) < min_subtitle_duration:
             end_time = start_time + min_subtitle_duration
 
-        subtitle_text = " ".join([w.word.strip() for w in current_words_in_bucket]).strip()
-        if len(subtitle_text) > max_chars_per_sub:
-            break_point = subtitle_text.rfind(' ', 0, max_chars_per_sub)
+        final_segment_text = "".join([w.text.strip() for w in current_words_in_segment]).strip()
+        if len(final_segment_text) > max_chars_per_sub:
+            break_point = -1
+            for k in range(min(len(final_segment_text) -1, max_chars_per_sub -1), -1, -1):
+                if final_segment_text[k] in (',', '.', '?', '!', '。', '？', '！', '，'):
+                    break_point = k + 1
+                    break
+            if break_point == -1:
+                break_point = final_segment_text.rfind(' ', 0, max_chars_per_sub)
             if break_point == -1:
                 break_point = max_chars_per_sub
-            line1 = subtitle_text[:break_point].strip()
-            line2 = subtitle_text[break_point:].strip()
-            subtitle_text = f"{line1}\n{line2}"
+            
+            line1 = final_segment_text[:break_point].strip()
+            line2 = final_segment_text[break_point:].strip()
+            final_subtitle_text = f"{line1}\n{line2}"
+        else:
+            final_subtitle_text = final_segment_text
         
-        start_time_str = hhmmss_ms(start_time)
-        end_time_str = hhmmss_ms(end_time)
-        
-        srt_content.append(f"{subtitle_idx}")
-        srt_content.append(f"{start_time_str} --> {end_time_str}")
-        srt_content.append(subtitle_text)
-        srt_content.append("")
+        if final_subtitle_text:
+            start_time_str = hhmmss_ms(start_time)
+            end_time_str = hhmmss_ms(end_time)
+            srt_content.append(f"{subtitle_idx}")
+            srt_content.append(f"{start_time_str} --> {end_time_str}")
+            srt_content.append(final_subtitle_text)
+            srt_content.append("")
 
     return "\n".join(srt_content)
 
@@ -210,14 +261,14 @@ st.markdown("""
     Upload a video file, and this app will:
     1. Extract audio using FFmpeg (via pydub).
     2. Transcribe the audio into **English** using the Faster-Whisper model with word-level timestamps.
-    3. Generate an SRT subtitle file, breaking lines into configurable maximum duration buckets and character limits, and ensuring a minimum display duration.
+    3. Generate an SRT subtitle file, intelligently segmenting lines based on punctuation, pauses, and configurable duration/character limits.
 """)
 
 # Sidebar for configuration
 st.sidebar.header("Configuration")
 model_size = st.sidebar.selectbox("Choose Whisper Model Size", MODEL_SIZES, index=MODEL_SIZES.index(DEFAULT_MODEL_SIZE))
 
-# Maximum subtitle duration slider (renamed for clarity)
+# Maximum subtitle duration slider
 bucket_seconds = st.sidebar.slider(
     "Maximum Subtitle Duration (seconds)", 
     min_value=1, 
@@ -226,13 +277,13 @@ bucket_seconds = st.sidebar.slider(
     help="Sets the maximum duration for a single subtitle entry. Shorter durations mean more frequent subtitle changes."
 )
 
-# Minimum subtitle duration slider (NEW)
+# Minimum subtitle duration slider
 min_duration_seconds = st.sidebar.slider(
     "Minimum Subtitle Duration (seconds)", 
     min_value=0.1, 
     max_value=2.0, 
     value=DEFAULT_MIN_SUBTITLE_DURATION, 
-    step=0.1, # Allow steps of 0.1 seconds
+    step=0.1, 
     help="Ensures each subtitle is displayed for at least this minimum duration. Prevents very short, flickering subtitles."
 )
 
@@ -278,12 +329,12 @@ if uploaded_file is not None:
                 st.error("No words were detected. Please try a clearer audio or a different model size.")
                 st.stop()
 
-        with st.spinner("Building SRT by fixed duration and character limits..."):
+        with st.spinner("Building SRT with intelligent segmentation..."):
             srt_text = bucket_words_by_duration(
                 words, 
                 bucket_seconds=bucket_seconds, 
                 max_chars_per_sub=max_chars, 
-                min_subtitle_duration=min_duration_seconds # Passing the new minimum duration parameter
+                min_subtitle_duration=min_duration_seconds
             )
 
         st.success("Done!")
