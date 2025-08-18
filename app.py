@@ -48,19 +48,22 @@ def load_model(model_size: str):
     st.info(f"Loading Faster-Whisper model: {model_size}. This may take a while for larger models.")
     # For Streamlit Cloud, setting device to "cpu" is generally safer and sufficient.
     # compute_type can be "int8" for CPU for better performance if supported.
-    return WhisperModel(model_size, device="cpu", compute_type="int8")
+    # CHANGED: Attempting int8_float16 for better precision. Revert to "int8" if OOM error occurs.
+    return WhisperModel(model_size, device="cpu", compute_type="int8_float16") 
 
 @st.cache_resource
-def transcribe_words(_model: WhisperModel, audio_path: str, lang: str = None): # CHANGED: Added _ to model
+def transcribe_words(_model: WhisperModel, audio_path: str, lang: str = None):
     """
     Transcribes audio using Faster-Whisper with word-level timestamps.
     """
     st.info("Transcribing audio with word-level timestamps...")
-    segments, _ = _model.transcribe( # CHANGED: Used _model here
+    segments, _ = _model.transcribe(
         audio_path,
         word_timestamps=True,
-        language=lang,
-        beam_size=5 # You can adjust beam_size for quality vs speed
+        language=lang, 
+        # CHANGED: Increased beam_size for potentially better precision.
+        # This will make transcription slower, but can improve accuracy of timestamps.
+        beam_size=7 
     )
     words = []
     for segment in segments:
@@ -195,14 +198,15 @@ st.title("Universal Subtitle Generator 🎬")
 st.markdown("""
     Upload a video file, and this app will:
     1. Extract audio using FFmpeg (via pydub).
-    2. Transcribe the audio using the Faster-Whisper model with word-level timestamps.
+    2. Transcribe the audio into **English** using the Faster-Whisper model with word-level timestamps.
     3. Generate an SRT subtitle file, breaking lines into configurable duration buckets and character limits.
 """)
 
 # Sidebar for configuration
 st.sidebar.header("Configuration")
 model_size = st.sidebar.selectbox("Choose Whisper Model Size", MODEL_SIZES, index=MODEL_SIZES.index(DEFAULT_MODEL_SIZE))
-lang_hint = st.sidebar.text_input("Source Language Hint (e.g., 'en', 'my', 'zh', 'ja' - optional)", value="")
+# CHANGED: Removed language hint input if always generating English subtitles
+# lang_hint = st.sidebar.text_input("Source Language Hint (e.g., 'en', 'my', 'zh', 'ja' - optional)", value="")
 bucket_seconds = st.sidebar.slider("Subtitle Duration Bucket (seconds)", min_value=1, max_value=10, value=DEFAULT_BUCKET_SECONDS)
 max_chars = st.sidebar.slider("Max Characters Per Subtitle Line", min_value=20, max_value=100, value=MAX_CHARS_PER_SUB)
 
@@ -244,9 +248,8 @@ if uploaded_file is not None:
 
         # Transcribe
         with st.spinner("Transcribing (word timestamps enabled)... This may take a while depending on audio length and model size."):
-            lang = lang_hint.strip() if lang_hint.strip() else None
-            # The line below is where the error occurred, now fixed by passing _model
-            words = transcribe_words(_model=model, audio_path=extracted_audio_path, lang=lang) 
+            # CHANGED: Force transcription to English (lang="en")
+            words = transcribe_words(_model=model, audio_path=extracted_audio_path, lang="en") 
             if not words:
                 st.error("No words were detected. Please try a clearer audio or a different model size.")
                 st.stop()
@@ -261,7 +264,7 @@ if uploaded_file is not None:
 
         # Download button
         base_name = os.path.splitext(uploaded_file.name)[0]
-        dl_name = f"{base_name}_duration_{int(bucket_seconds*1000)}ms.srt"
+        dl_name = f"{base_name}_english_sub.srt" # Changed default download name to reflect English
         st.download_button(
             "Download SRT",
             data=srt_text.encode("utf-8"),
