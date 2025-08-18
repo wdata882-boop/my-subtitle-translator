@@ -83,14 +83,14 @@ def bucket_words_by_duration(words: list, bucket_seconds: int = 5, max_chars_per
         return word_text.endswith(('.', '?', '!', ',', '。', '？', '！', '，'))
 
     for i, word in enumerate(words):
-        # CHANGED: Use word.word instead of word.text to resolve AttributeError
+        # Using word.word as determined by previous error logs for compatibility
         word_text = word.word 
 
         current_words_in_segment.append(word)
         
         # Calculate current segment's properties
-        # CHANGED: Use .word attribute for joining
-        segment_text = "".join([w.word for w in current_words_in_segment]).strip()
+        # CHANGED: Added " " to join words with spaces
+        segment_text = " ".join([w.word for w in current_words_in_segment]).strip()
         
         # Ensure there are words in the segment before calculating duration
         segment_duration = 0.0
@@ -145,8 +145,8 @@ def bucket_words_by_duration(words: list, bucket_seconds: int = 5, max_chars_per
                 if (end_time - start_time) < min_subtitle_duration:
                     end_time = start_time + min_subtitle_duration
 
-                # CHANGED: Use .word.strip() for subtitle text
-                subtitle_text = "".join([w.word.strip() for w in current_words_in_segment]).strip()
+                # CHANGED: Added " " to join words with spaces
+                subtitle_text = " ".join([w.word.strip() for w in current_words_in_segment]).strip()
                 
                 # Line breaking for subtitles that are still too long after segmentation
                 if len(subtitle_text) > max_chars_per_sub:
@@ -186,8 +186,8 @@ def bucket_words_by_duration(words: list, bucket_seconds: int = 5, max_chars_per
         if (end_time - start_time) < min_subtitle_duration:
             end_time = start_time + min_subtitle_duration
 
-        # CHANGED: Use .word.strip() for final segment text
-        final_segment_text = "".join([w.word.strip() for w in current_words_in_segment]).strip()
+        # CHANGED: Added " " to join words with spaces
+        final_segment_text = " ".join([w.word.strip() for w in current_words_in_segment]).strip()
         if len(final_segment_text) > max_chars_per_sub:
             break_point = -1
             for k in range(min(len(final_segment_text) -1, max_chars_per_sub -1), -1, -1):
