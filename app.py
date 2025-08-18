@@ -22,9 +22,9 @@ DEFAULT_MODEL_SIZE = "base"
 MAX_CHARS_PER_SUB = 60 # Maximum characters per subtitle line
 DEFAULT_BUCKET_SECONDS = 5 # Default duration for subtitle buckets
 
-# Define FFmpeg path relative to the app.py
-# Make sure 'ffmpeg' executable is in the same directory as app.py
-FFMPEG_PATH = "./ffmpeg"
+# FFmpeg will be installed via packages.txt and should be in the system's PATH
+# No need to specify a local path like "./ffmpeg"
+# FFMPEG_PATH = "./ffmpeg" # This line is removed / commented out
 
 # ----------------------------
 # Helper Functions
@@ -149,31 +149,18 @@ def bucket_words_by_duration(words: list, bucket_seconds: int = 5, max_chars_per
 
 def ensure_ffmpeg_access():
     """
-    Ensures the ffmpeg executable exists and has execute permissions.
-    Attempts to give execute permission if not already set (useful for GitHub web uploads).
+    Ensures the ffmpeg executable is available in the system PATH.
+    It will be installed via packages.txt during deployment.
     """
     try:
-        # Give execute permissions if not already set (crucial for files uploaded directly to GitHub via web UI)
-        # Use a simpler check for chmod success.
-        subprocess.run(["chmod", "+x", FFMPEG_PATH], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        
-        if not os.path.exists(FFMPEG_PATH):
-            st.error(f"FFmpeg executable not found at: {FFMPEG_PATH}. Please ensure you have downloaded the correct static build for Linux (e.g., amd64) and placed it in your repository's root directory.")
-            return False
-        
-        if not os.access(FFMPEG_PATH, os.X_OK): # Double check permissions after chmod attempt
-            st.error(f"FFmpeg executable at {FFMPEG_PATH} does not have execute permissions even after trying to set them. Please ensure the file is correctly uploaded.")
-            return False
-        
-        # Optionally, check ffmpeg version to confirm it works
-        # If this fails, the issue is with ffmpeg itself or its dependencies, not just permission/presence
-        subprocess.run([FFMPEG_PATH, "-version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        # Use "ffmpeg" directly as it will be in the system PATH after packages.txt installation
+        subprocess.run(["ffmpeg", "-version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
         return True
     except FileNotFoundError:
-        st.error(f"FFmpeg executable not found at: {FFMPEG_PATH}. Please ensure it is in your repository's root and correctly named 'ffmpeg'.")
+        st.error(f"FFmpeg executable not found. It should be installed via 'packages.txt'. Please check your packages.txt file and ensure it contains 'ffmpeg'.")
         return False
     except subprocess.CalledProcessError as e:
-        st.error(f"FFmpeg returned an error during version check: {e}. This might indicate a problem with the ffmpeg executable itself.")
+        st.error(f"FFmpeg returned an error during version check: {e}. This might indicate a problem with the ffmpeg installation via packages.txt.")
         return False
     except Exception as e:
         st.error(f"An unexpected error occurred during FFmpeg setup: {e}. Please check your deployment logs for more details.")
@@ -181,12 +168,13 @@ def ensure_ffmpeg_access():
 
 def extract_audio_pydub(input_path: str, output_path: str, sr: int = 16000) -> str:
     """
-    Use pydub with a specified ffmpeg path to extract mono wav @16kHz.
+    Use pydub to extract mono wav @16kHz.
+    Pydub will automatically find 'ffmpeg' in the system PATH.
     Returns the path to the extracted audio if successful, None otherwise.
     """
     try:
-        # Set pydub's converter to the specified ffmpeg path
-        AudioSegment.converter = FFMPEG_PATH
+        # Set pydub's converter to "ffmpeg" as it's in system PATH now
+        AudioSegment.converter = "ffmpeg"
         audio = AudioSegment.from_file(input_path)
         audio = audio.set_channels(1)  # Mono
         audio = audio.set_frame_rate(sr)  # 16kHz
@@ -194,7 +182,7 @@ def extract_audio_pydub(input_path: str, output_path: str, sr: int = 16000) -> s
         st.success(f"Audio extracted successfully to {output_path}")
         return output_path
     except Exception as e:
-        st.error(f"Error extracting audio with pydub (FFmpeg issue?): {e}. Please check your video file format and ensure 'ffmpeg' is correctly placed and has execute permissions.")
+        st.error(f"Error extracting audio with pydub (FFmpeg issue?): {e}. Please check your video file format and ensure 'ffmpeg' is installed correctly via packages.txt.")
         # Important: Return None if extraction fails, so the calling code knows it failed
         return None
 
@@ -282,13 +270,3 @@ if uploaded_file is not None:
     # The temporary directory and its contents (temp_video_path, temp_audio_path)
     # are automatically cleaned up here by 'with tempfile.TemporaryDirectory()'.
     # So, explicit os.remove() calls are not strictly necessary as they are managed.
-
-# Add a note for FFmpeg setup
-st.sidebar.markdown("---")
-st.sidebar.markdown(f"""
-    **FFmpeg Setup Note:**
-    This app requires `ffmpeg` executable.
-    It should be placed in the **root directory** of your GitHub repository
-    and named exactly `ffmpeg` (no file extension like `.exe`).
-    Ensure it has execute permissions (`chmod +x ffmpeg`).
-""")
