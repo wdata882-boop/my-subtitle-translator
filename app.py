@@ -46,6 +46,7 @@ def load_model(model_size: str):
     Loads the Faster-Whisper model. Uses cache for efficiency.
     """
     st.info(f"Loading Faster-Whisper model: {model_size}. This may take a while for larger models.")
+    # Changed compute_type to "int8" for better CPU compatibility on Streamlit Cloud
     return WhisperModel(model_size, device="cpu", compute_type="int8") 
 
 @st.cache_resource
@@ -82,13 +83,14 @@ def bucket_words_by_duration(words: list, bucket_seconds: int = 5, max_chars_per
         return word_text.endswith(('.', '?', '!', ',', '。', '？', '！', '，'))
 
     for i, word in enumerate(words):
-        word_text = word.text # Use word.text for newer faster-whisper versions
+        # CHANGED: Use word.word instead of word.text to resolve AttributeError
+        word_text = word.word 
 
         current_words_in_segment.append(word)
         
         # Calculate current segment's properties
-        # Use .text attribute of the Word object
-        segment_text = "".join([w.text for w in current_words_in_segment]).strip()
+        # CHANGED: Use .word attribute for joining
+        segment_text = "".join([w.word for w in current_words_in_segment]).strip()
         
         # Ensure there are words in the segment before calculating duration
         segment_duration = 0.0
@@ -143,7 +145,8 @@ def bucket_words_by_duration(words: list, bucket_seconds: int = 5, max_chars_per
                 if (end_time - start_time) < min_subtitle_duration:
                     end_time = start_time + min_subtitle_duration
 
-                subtitle_text = "".join([w.text.strip() for w in current_words_in_segment]).strip()
+                # CHANGED: Use .word.strip() for subtitle text
+                subtitle_text = "".join([w.word.strip() for w in current_words_in_segment]).strip()
                 
                 # Line breaking for subtitles that are still too long after segmentation
                 if len(subtitle_text) > max_chars_per_sub:
@@ -157,10 +160,6 @@ def bucket_words_by_duration(words: list, bucket_seconds: int = 5, max_chars_per
                         break_point = subtitle_text.rfind(' ', 0, max_chars_per_sub)
                     if break_point == -1: # No space either, force break at max_chars
                         break_point = max_chars_per_sub
-                    
-                    # Ensure break_point doesn't cut in the middle of a word (this is a simplified check)
-                    # For precise word breaking, you'd iterate through word list and split there.
-                    # Current logic aims for visual line breaks after segment is formed.
                     
                     line1 = subtitle_text[:break_point].strip()
                     line2 = subtitle_text[break_point:].strip()
@@ -187,7 +186,8 @@ def bucket_words_by_duration(words: list, bucket_seconds: int = 5, max_chars_per
         if (end_time - start_time) < min_subtitle_duration:
             end_time = start_time + min_subtitle_duration
 
-        final_segment_text = "".join([w.text.strip() for w in current_words_in_segment]).strip()
+        # CHANGED: Use .word.strip() for final segment text
+        final_segment_text = "".join([w.word.strip() for w in current_words_in_segment]).strip()
         if len(final_segment_text) > max_chars_per_sub:
             break_point = -1
             for k in range(min(len(final_segment_text) -1, max_chars_per_sub -1), -1, -1):
