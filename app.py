@@ -18,7 +18,7 @@ from pydub import AudioSegment
 # Constants and UI Configuration
 # ----------------------------
 MODEL_SIZES = ["tiny", "base", "small", "medium", "large-v2", "large-v3"]
-DEFAULT_MODEL_SIZE = "small"
+DEFAULT_MODEL_SIZE = "base"
 MAX_CHARS_PER_SUB = 60 # Maximum characters per subtitle line
 DEFAULT_BUCKET_SECONDS = 5 # Default duration for subtitle buckets (maximum duration)
 DEFAULT_MIN_SUBTITLE_DURATION = 0.5 # Default minimum duration for a subtitle entry
@@ -139,7 +139,7 @@ def bucket_words_by_duration(words: list, bucket_seconds: int = 5, max_chars_per
         if should_finalize:
             if current_words_in_segment:
                 start_time = current_words_in_segment[0].start
-                end_time = current_words_in_segment[-1].end + 0.02
+                end_time = current_words_in_segment[-1].end
                 
                 # Apply minimum duration for display
                 if (end_time - start_time) < min_subtitle_duration:
@@ -182,7 +182,7 @@ def bucket_words_by_duration(words: list, bucket_seconds: int = 5, max_chars_per
     # Final check for any remaining words (should be caught by is_last_word, but as a safeguard)
     if current_words_in_segment:
         start_time = current_words_in_segment[0].start
-        end_time = current_words_in_segment[-1].end + 0.02
+        end_time = current_words_in_segment[-1].end
         if (end_time - start_time) < min_subtitle_duration:
             end_time = start_time + min_subtitle_duration
 
