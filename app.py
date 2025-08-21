@@ -50,7 +50,7 @@ def load_model(model_size: str):
     return WhisperModel(model_size, device="cpu", compute_type="int8") 
 
 @st.cache_resource
-def transcribe_words(_model: WhisperModel, audio_path: str, lang: str = None):
+def transcribe_words(_model: WhisperModel, audio_path: str, lang: str = zh):
     """
     Transcribes audio using Faster-Whisper with word-level timestamps.
     """
