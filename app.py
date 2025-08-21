@@ -4,7 +4,7 @@ import math
 import tempfile
 import subprocess
 import streamlit as st
-import openai # pip install openai
+
 
 # Faster-Whisper ကို word-level timestamps အတွက် အသုံးပြုရန်
 # pip install faster-whisper
