@@ -4,7 +4,7 @@ import math
 import tempfile
 import subprocess
 import streamlit as st
-import openai # pip install openai
+
 
 # Use faster-whisper for word-level timestamps
 # pip install faster-whisper
