@@ -13,7 +13,7 @@ from PIL import Image
 # ----------------------------
 st.set_page_config(
     page_title="Universal Subtitle Generator",
-    page_icon="�",
+    page_icon="🎬",
     layout="wide"
 )
 
