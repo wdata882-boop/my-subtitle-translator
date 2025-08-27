@@ -1,302 +1,227 @@
+# -*- coding: utf-8 -*-
 import streamlit as st
-import io
 import os
-import re
-from pydub import AudioSegment
-import openai
-from faster_whisper import WhisperModel
-import srt
-import datetime
+import tempfile
+import moviepy.editor as mp
+from openai import OpenAI
+from googletrans import Translator
+import pytesseract
+from PIL import Image
 
-# Setting OpenAI API key
-if "openai_api_key" not in st.secrets:
-    st.error("OpenAI API key is missing. Please add it to Streamlit secrets.")
-    st.stop()
+# ----------------------------
+# UI Configuration (Burmese)
+# ----------------------------
+st.set_page_config(
+    page_title="Universal Subtitle Generator",
+    page_icon="🎬",
+    layout="wide"
+)
 
-openai.api_key = st.secrets["openai_api_key"]
+# ----------------------------
+# Helper Functions
+# ----------------------------
 
-@st.cache_resource
-def load_whisper_model(model_size: str):
+def hhmmss_ms(seconds: float) -> str:
     """
-    Loads the Whisper model from cache.
-    Args:
-        model_size (str): The size of the model to load (e.g., "small", "medium").
-    Returns:
-        WhisperModel: The loaded Whisper model.
+    Converts seconds to SRT time format HH:MM:SS,mmm
     """
-    # Use CPU since we are not using a GPU instance.
-    return WhisperModel(model_size, device="cpu", compute_type="int8_float16")
+    ms = int(round((seconds - int(seconds)) * 1000))
+    total_seconds = int(seconds)
+    h = total_seconds // 3600
+    m = (total_seconds % 3600) // 60
+    s = total_seconds % 60
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
-@st.cache_resource
-def transcribe_words(_model: WhisperModel, audio_path: str, lang: str):
+def get_api_key():
     """
-    Transcribes audio to text and provides word-level timestamps.
-    Args:
-        _model (WhisperModel): The Whisper model.
-        audio_path (str): Path to the audio file.
-        lang (str): Language code (e.g., "zh").
-    Returns:
-        List of dicts: List of transcribed words with timestamps and text.
+    Retrieves the OpenAI API key from Streamlit secrets or user input.
     """
-    segments, _ = _model.transcribe(
-        audio_path,
-        word_timestamps=True,
-        language=lang,
-        beam_size=5,
-        vad_filter=True
+    api_key = st.secrets.get("OPENAI_API_KEY")
+    if api_key:
+        return api_key
+    
+    st.warning("Please enter your OpenAI API Key to use this app.")
+    api_key_input = st.text_input(
+        "OpenAI API Key (မရှိပါက ရိုက်ထည့်ပါ)", 
+        type="password", 
+        help="သင့်ရဲ့ API key ကို Streamlit Cloud ရဲ့ Secrets မှာ ထည့်ထားနိုင်ပါတယ်၊ သို့မဟုတ် ဒီနေရာမှာ တိုက်ရိုက်ရိုက်ထည့်နိုင်ပါတယ်။"
     )
-    words = []
-    for segment in segments:
-        for word in segment.words:
-            words.append(word)
-    return words
+    return api_key_input
 
-def format_time(seconds: float) -> str:
+def transcribe_with_whisper(audio_path: str, client: OpenAI):
     """
-    Formats seconds into SRT timestamp format.
-    Args:
-        seconds (float): The time in seconds.
-    Returns:
-        str: Formatted time string (HH:MM:SS,mmm).
+    Transcribes the audio file using OpenAI Whisper API.
+    Returns the transcription and word-level timestamps.
     """
-    delta = datetime.timedelta(seconds=seconds)
-    hours, remainder = divmod(delta.total_seconds(), 3600)
-    minutes, remainder = divmod(remainder, 60)
-    seconds, milliseconds = divmod(remainder, 1)
-    return f"{int(hours):02}:{int(minutes):02}:{int(seconds):02},{int(milliseconds * 1000):03}"
-
-def bucket_words_by_duration(
-    words: list,
-    bucket_seconds: int = 5,
-    max_chars_per_sub: int = 60
-) -> list:
-    """
-    Buckets words into subtitle segments based on duration and max characters,
-    with an intelligent punctuation-based segmentation.
-
-    Args:
-        words (list): List of word objects from faster-whisper.
-        bucket_seconds (int): Maximum duration for a subtitle block in seconds.
-        max_chars_per_sub (int): Maximum number of characters per subtitle line.
-
-    Returns:
-        list: A list of dictionaries, each representing an SRT block.
-    """
-    # Initialize subtitle_idx to 1
-    subtitle_idx = 1
-    
-    srt_content_blocks = []
-    current_segment_start_time = 0.0
-    current_segment_words = []
-    
-    def is_sentence_ending(word_text: str) -> bool:
-        """
-        Checks if a word ends with punctuation that marks the end of a sentence or a pause.
-        """
-        return word_text.endswith(('.', '?', '!', ',', '。', '？', '！', '，'))
-
-    for i, word in enumerate(words):
-        # Use word.word for newer faster-whisper versions
-        word_text = word.word
-        current_segment_words.append(word)
-
-        if not current_segment_words:
-            current_segment_start_time = word.start
-
-        current_duration = word.end - current_segment_start_time
-        current_text = "".join([w.word for w in current_segment_words])
-
-        # Check for sentence end, max duration, or max characters
-        is_end_of_sentence = is_sentence_ending(word_text)
-        is_max_duration = current_duration >= bucket_seconds
-        is_max_chars = len(current_text) >= max_chars_per_sub
-        
-        # Determine if we should create a new subtitle block
-        if (is_end_of_sentence and len(current_text) > 5) or is_max_duration or is_max_chars or (i == len(words) - 1):
-            if current_segment_words:
-                start_time = current_segment_words[0].start
-                end_time = current_segment_words[-1].end
-                subtitle_text = "".join([w.word for w in current_segment_words])
-
-                srt_content_blocks.append({
-                    "id": subtitle_idx,
-                    "start": start_time,
-                    "end": end_time,
-                    "text": subtitle_text
-                })
-                subtitle_idx += 1
-                current_segment_words = []
-                current_segment_start_time = 0.0
-
-    return srt_content_blocks
-
-
-def translate_text_openai(text_content: str, source_lang: str = "zh", target_lang: str = "my") -> str:
-    """
-    Translates text content using the OpenAI Chat API.
-
-    Args:
-        text_content (str): The text to translate.
-        source_lang (str): The source language.
-        target_lang (str): The target language.
-    Returns:
-        str: The translated text, or an error message if translation fails.
-    """
-    if not text_content:
-        return ""
-
+    st.info("အသံကို စာသားပြောင်းနေပါသည်... စောင့်ဆိုင်းပေးပါ...")
     try:
-        response = openai.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {
-                    "role": "system",
-                    "content": f"You are a professional subtitle translator. Translate the following text from {source_lang} to {target_lang}."
-                },
-                {
-                    "role": "user",
-                    "content": text_content
-                }
-            ],
-            temperature=0.3,
-            max_tokens=2000,
-            top_p=1.0,
-            frequency_penalty=0.0,
-            presence_penalty=0.0
-        )
-        translated_content = response.choices[0].message.content.strip()
-        return translated_content
-    except openai.APIError as e: # CHANGED: Use a more general APIError for backwards compatibility
-        st.error(f"OpenAI API Error: {e.response.status_code} - {e.response.json().get('error', {}).get('message', 'Unknown error')}")
-        return f"[ဘာသာပြန်မအောင်မြင်ပါ: {e.response.json().get('error', {}).get('message', 'Unknown error')}]"
+        with open(audio_path, "rb") as audio_file:
+            transcript = client.audio.transcriptions.create(
+                model="whisper-1", 
+                file=audio_file, 
+                response_format="verbose_json",
+                language="en" # Setting language to default
+            )
+        return transcript
     except Exception as e:
-        st.error(f"An unexpected error occurred during translation: {e}")
-        return f"[ဘာသာပြန်မအောင်မြင်ပါ: {e}]"
+        st.error(f"Whisper API ခေါ်ယူမှု မအောင်မြင်ပါ: {e}")
+        return None
 
+def translate_to_english(text: str):
+    """
+    Translates a given text to English using Google Translate.
+    """
+    st.info("စာသားကို အင်္ဂလိပ်လို ပြန်ဆိုနေပါသည်...")
+    try:
+        translator = Translator()
+        translated_text = translator.translate(text, dest='en').text
+        return translated_text
+    except Exception as e:
+        st.error(f"ဘာသာပြန်ဆိုမှု မအောင်မြင်ပါ: {e}")
+        return None
+
+def extract_ocr_text(video_path: str, interval: int = 5):
+    """
+    Extracts text from video frames using OCR.
+    """
+    st.info("ဗီဒီယိုထဲက စာသားတွေကို ရှာဖွေဖတ်နေပါသည်...")
+    ocr_results = []
+    try:
+        clip = mp.VideoFileClip(video_path)
+        duration = clip.duration
+        
+        for t in range(0, int(duration), interval):
+            frame = clip.get_frame(t)
+            img = Image.fromarray(frame)
+            text = pytesseract.image_to_string(img)
+            if text.strip():
+                ocr_results.append({
+                    "start": t,
+                    "end": t + interval,
+                    "text": f"[On-Screen Text]: {text.strip()}"
+                })
+        return ocr_results
+    except Exception as e:
+        st.error(f"OCR လုပ်ဆောင်မှု မအောင်မြင်ပါ: {e}")
+        return []
 
 def main():
     """
-    Main function to run the Streamlit app.
+    Main function for the Streamlit app.
     """
-    st.set_page_config(
-        page_title="Audio Subtitle Generator",
-        layout="wide",
-        initial_sidebar_state="expanded",
-    )
+    st.title("🎬 ဗီဒီယိုဖိုင်မှ စာသားနှင့် Subtitle ထုတ်လုပ်ခြင်း")
+    st.markdown("""
+    ဒီ application က ဗီဒီယိုဖိုင်တွေကနေ အသံနဲ့ စာသားတွေကို တိကျမှန်ကန်စွာ ထုတ်လုပ်ပေးနိုင်ပါတယ်။
     
-    st.title("MP3 Subtitle Generator")
-    st.markdown("အသံဖိုင်မှ စာတန်းထိုးများကို ဖန်တီးပါ။")
+    **အဓိက လုပ်ဆောင်ချက်များ:**
+    * **အမြင့်ဆုံး တိကျမှု:** OpenAI Whisper API ကိုသုံးပြီး အသံကို စာသားပြောင်းလဲပေးခြင်း။
+    * **ဘာသာစကားမျိုးစုံ သိရှိခြင်း:** မည်သည့်ဘာသာစကားမဆို အလိုအလျောက် သိရှိပေးခြင်း။
+    * **OCR:** ဗီဒီယိုထဲက ပေါ်နေတဲ့ စာသားတွေကို ဖတ်ရှုပေးခြင်း။
+    """)
+    
+    api_key = get_api_key()
 
-    st.sidebar.header("Options")
-    model_size = st.sidebar.selectbox(
-        "Select Whisper model size",
-        ("tiny", "base", "small", "medium"),
-        index=2
+    if not api_key:
+        return
+
+    st.subheader("အဆင့် ၁: ဗီဒီယိုဖိုင် တင်ပါ")
+    uploaded_file = st.file_uploader(
+        "ဗီဒီယိုဖိုင် (ဥပမာ- mp4, mov) ကို ရွေးချယ်ပါ", 
+        type=["mp4", "mov", "avi", "mkv"]
     )
-
-    bucket_seconds = st.sidebar.slider(
-        "Subtitle Segment Duration (seconds)",
-        min_value=1,
-        max_value=10,
-        value=5
-    )
-
-    max_chars = st.sidebar.slider(
-        "Max Characters Per Subtitle Line",
-        min_value=30,
-        max_value=120,
-        value=60
-    )
-
-    uploaded_file = st.file_uploader("Upload an MP3 Audio File", type=["mp3"])
 
     if uploaded_file:
-        audio_bytes = uploaded_file.read()
-        audio_io = io.BytesIO(audio_bytes)
-
-        st.audio(audio_io, format='audio/mp3')
-
-        with st.spinner("Converting MP3 to WAV..."):
-            audio_segment = AudioSegment.from_mp3(audio_io)
-            wav_path = "temp_audio.wav"
-            audio_segment.export(wav_path, format="wav")
-
-        st.success("Conversion successful! Now transcribing...")
-
-        model = load_whisper_model(model_size)
-
-        with st.spinner("Transcribing with word-level timestamps..."):
-            words = transcribe_words(_model=model, audio_path=wav_path, lang="zh")
-
-        os.remove(wav_path)
-
-        if not words:
-            st.error("Transcription failed. No words found in the audio.")
-            st.stop()
-
-        with st.spinner("Building SRT with intelligent segmentation..."):
-            srt_blocks = bucket_words_by_duration(
-                words,
-                bucket_seconds=bucket_seconds,
-                max_chars_per_sub=max_chars,
-            )
-
-        if not srt_blocks:
-            st.error("Failed to generate SRT subtitles. No words could be segmented.")
-            st.stop()
-
-        srt_content = srt.compose(
-            (srt.Subtitle(
-                index=block['id'],
-                start=datetime.timedelta(seconds=block['start']),
-                end=datetime.timedelta(seconds=block['end']),
-                content=block['text']
-            ) for block in srt_blocks),
-            reindex=False
-        )
-
-        st.subheader("Generated Subtitles (Original Language)")
-        st.download_button(
-            label="Download SRT File (Original)",
-            data=srt_content,
-            file_name="subtitles_original.srt",
-            mime="text/plain",
-        )
-
-        st.code(srt_content, language="srt")
+        st.subheader("အဆင့် ၂: ရွေးချယ်စရာများကို သတ်မှတ်ပါ")
         
-        st.markdown("---")
-        st.header("Translate to English?")
-        if st.checkbox("Enable English Translation"):
-            with st.spinner("Translating to English..."):
-                translated_blocks = []
-                for block in srt_blocks:
-                    translated_text = translate_text_openai(block['text'], source_lang="zh", target_lang="en")
-                    translated_blocks.append({
-                        "id": block['id'],
-                        "start": block['start'],
-                        "end": block['end'],
-                        "text": translated_text
-                    })
+        translate_to_en = st.checkbox(
+            "📝 စာသားကို အင်္ဂလိပ်လို ဘာသာပြန်လိုပါသလား?"
+        )
+        
+        extract_ocr = st.checkbox(
+            "📄 ဗီဒီယိုပေါ်က စာသားတွေကိုပါ ထုတ်ယူလိုပါသလား?"
+        )
+        
+        st.write("---")
+        
+        if st.button("▶️ စတင်ပါ"):
+            if not api_key:
+                st.error("API Key မရှိပါ၊ ကျေးဇူးပြု၍ ထည့်သွင်းပေးပါ။")
+                return
 
-                translated_srt_content = srt.compose(
-                    (srt.Subtitle(
-                        index=block['id'],
-                        start=datetime.timedelta(seconds=block['start']),
-                        end=datetime.timedelta(seconds=block['end']),
-                        content=block['text']
-                    ) for block in translated_blocks),
-                    reindex=False
-                )
+            with tempfile.TemporaryDirectory() as tmpdir:
+                try:
+                    video_path = os.path.join(tmpdir, uploaded_file.name)
+                    with open(video_path, "wb") as f:
+                        f.write(uploaded_file.getbuffer())
+                    
+                    audio_path = os.path.join(tmpdir, "audio.mp3")
+                    
+                    # Use moviepy to extract audio
+                    st.info("အသံကို ထုတ်ယူနေပါသည်...")
+                    video_clip = mp.VideoFileClip(video_path)
+                    video_clip.audio.write_audiofile(audio_path, logger=None)
 
-                st.subheader("Translated Subtitles (English)")
-                st.download_button(
-                    label="Download SRT File (English)",
-                    data=translated_srt_content,
-                    file_name="subtitles_translated.srt",
-                    mime="text/plain",
-                )
-                st.code(translated_srt_content, language="srt")
+                    # Initialize OpenAI client
+                    client = OpenAI(api_key=api_key)
+                    
+                    # Transcribe
+                    transcript_data = transcribe_with_whisper(audio_path, client)
+                    if not transcript_data:
+                        return
+                    
+                    # Translate if selected
+                    if translate_to_en:
+                        translated_text = translate_to_english(transcript_data.text)
+                        if translated_text:
+                            transcript_data.text = translated_text
+                    
+                    # OCR if selected
+                    ocr_results = []
+                    if extract_ocr:
+                        ocr_results = extract_ocr_text(video_path)
+                    
+                    # Generate SRT
+                    st.subheader("ရလာဒ်")
+                    
+                    srt_content = ""
+                    segment_id = 1
+                    
+                    # Add OCR results at the beginning of the file to combine them.
+                    all_segments = list(transcript_data.segments)
+                    all_segments.extend(ocr_results)
+
+                    # Sort segments by start time
+                    all_segments.sort(key=lambda s: s['start'])
+
+                    for segment in all_segments:
+                        start_time = segment.get('start', 0)
+                        end_time = segment.get('end', 0)
+                        text = segment.get('text', "")
+                        
+                        if end_time > start_time:
+                            srt_content += f"{segment_id}\n"
+                            srt_content += f"{hhmmss_ms(start_time)} --> {hhmmss_ms(end_time)}\n"
+                            srt_content += f"{text.strip()}\n\n"
+                            segment_id += 1
+                        
+                    if srt_content:
+                        st.text_area("SRT Content", srt_content, height=320)
+                        
+                        base_name = os.path.splitext(uploaded_file.name)[0]
+                        dl_name = f"{base_name}_english_sub.srt" if translate_to_en else f"{base_name}_sub.srt"
+                        
+                        st.download_button(
+                            "SRT ဖိုင်ကို ဒေါင်းလုဒ်လုပ်ရန်",
+                            srt_content,
+                            file_name=dl_name,
+                            mime="text/plain"
+                        )
+                    else:
+                        st.warning("စာသားတစ်ခုမှ မတွေ့ပါ")
+                        
+                except Exception as e:
+                    st.error(f"Error: {e}")
+                    st.stop()
 
 if __name__ == "__main__":
     main()
