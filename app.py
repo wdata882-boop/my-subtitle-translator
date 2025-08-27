@@ -2,7 +2,7 @@
 import streamlit as st
 import os
 import tempfile
-import moviepy.editor as mp
+import subprocess
 from openai import OpenAI
 from googletrans import Translator
 import pytesseract
@@ -13,7 +13,7 @@ from PIL import Image
 # ----------------------------
 st.set_page_config(
     page_title="Universal Subtitle Generator",
-    page_icon="🎬",
+    page_icon="�",
     layout="wide"
 )
 
@@ -87,19 +87,30 @@ def extract_ocr_text(video_path: str, interval: int = 5):
     st.info("ဗီဒီယိုထဲက စာသားတွေကို ရှာဖွေဖတ်နေပါသည်...")
     ocr_results = []
     try:
-        clip = mp.VideoFileClip(video_path)
-        duration = clip.duration
-        
-        for t in range(0, int(duration), interval):
-            frame = clip.get_frame(t)
-            img = Image.fromarray(frame)
-            text = pytesseract.image_to_string(img)
-            if text.strip():
-                ocr_results.append({
-                    "start": t,
-                    "end": t + interval,
-                    "text": f"[On-Screen Text]: {text.strip()}"
-                })
+        # Using ffmpeg and subprocess for frame extraction
+        with tempfile.TemporaryDirectory() as frame_dir:
+            frame_pattern = os.path.join(frame_dir, "frame-%04d.png")
+            command = [
+                'ffmpeg', '-i', video_path, '-vf', f"fps=1/{interval}", frame_pattern
+            ]
+            
+            subprocess.run(command, check=True, capture_output=True, text=True)
+            
+            frame_files = sorted([f for f in os.listdir(frame_dir) if f.startswith('frame-')])
+            
+            for i, frame_file in enumerate(frame_files):
+                frame_path = os.path.join(frame_dir, frame_file)
+                img = Image.open(frame_path)
+                text = pytesseract.image_to_string(img)
+                
+                if text.strip():
+                    start_time = i * interval
+                    end_time = start_time + interval
+                    ocr_results.append({
+                        "start": start_time,
+                        "end": end_time,
+                        "text": f"[On-Screen Text]: {text.strip()}"
+                    })
         return ocr_results
     except Exception as e:
         st.error(f"OCR လုပ်ဆောင်မှု မအောင်မြင်ပါ: {e}")
@@ -156,10 +167,12 @@ def main():
                     
                     audio_path = os.path.join(tmpdir, "audio.mp3")
                     
-                    # Use moviepy to extract audio
+                    # Using subprocess to extract audio directly with ffmpeg for more reliability
                     st.info("အသံကို ထုတ်ယူနေပါသည်...")
-                    video_clip = mp.VideoFileClip(video_path)
-                    video_clip.audio.write_audiofile(audio_path, logger=None)
+                    command = [
+                        'ffmpeg', '-i', video_path, '-q:a', '0', '-map', 'a', audio_path
+                    ]
+                    subprocess.run(command, check=True, capture_output=True, text=True)
 
                     # Initialize OpenAI client
                     client = OpenAI(api_key=api_key)
@@ -186,11 +199,9 @@ def main():
                     srt_content = ""
                     segment_id = 1
                     
-                    # Add OCR results at the beginning of the file to combine them.
+                    # Combine all segments and sort by start time
                     all_segments = list(transcript_data.segments)
                     all_segments.extend(ocr_results)
-
-                    # Sort segments by start time
                     all_segments.sort(key=lambda s: s['start'])
 
                     for segment in all_segments:
