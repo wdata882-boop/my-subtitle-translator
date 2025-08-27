@@ -285,39 +285,3 @@ def extract_audio_pydub(input_path: str, output_path: str, sr: int = 16000) -> s
     except Exception as e:
         st.error(f"pydub ဖြင့် အသံထုတ်ယူရာတွင် အမှားဖြစ်သည် (FFmpeg ပြဿနာ?): {e}။ သင်၏ video ဖိုင် format ကို စစ်ဆေးပြီး 'ffmpeg' ကောင်းစွာ အလုပ်လုပ်ကြောင်း သေချာပါစေ။")
         return None
-
-# ----------------------------
-# Streamlit App UI (User Interface)
-# ----------------------------
-st.set_page_config(layout="wide", page_title="Universal Subtitle Generator")
-
-st.title("Universal Subtitle Generator 🎬")
-st.markdown("""
-    Video ဖိုင်တစ်ခုကို တင်ပါ။ ဤ app သည်-
-    1. FFmpeg (pydub မှတဆင့်) ကို အသုံးပြု၍ အသံကို ထုတ်ယူမည်။
-    2. Faster-Whisper model ကို အသုံးပြု၍ အသံကို စကားလုံးအဆင့် အချိန်မှတ်တမ်းများဖြင့် transcribe လုပ်မည် (မူရင်းဘာသာစကားဖြင့်)။
-    3. **(ရွေးချယ်နိုင်သည်) ဘာသာပြန်ထားသော စာသားကို OpenAI API ကို အသုံးပြု၍ အင်္ဂလိပ်လို ဘာသာပြန်မည်** (API key လိုအပ်သည်)။
-    4. ပုဒ်ဖြတ်ပုဒ်ရပ်များ၊ ရပ်တန့်မှုများ နှင့် configure လုပ်နိုင်သော ကြာချိန်/စာလုံးရေ ကန့်သတ်ချက်များအပေါ် အခြေခံ၍ စာကြောင်းများကို ဉာဏ်ရည်ထက်မြက်စွာ ပိုင်းခြားကာ SRT စာတန်းထိုးဖိုင်ကို ထုတ်ပေးမည်။
-""")
-
-# Configuration အတွက် Sidebar
-st.sidebar.header("Configuration")
-model_size = st.sidebar.selectbox("Whisper Model Size ကို ရွေးပါ", MODEL_SIZES, index=MODEL_SIZES.index(DEFAULT_MODEL_SIZE))
-
-# အများဆုံး စာတန်းထိုး ကြာချိန် slider
-bucket_seconds = st.sidebar.slider(
-    "အများဆုံး စာတန်းထိုး ကြာချိန် (စက္ကန့်)", 
-    min_value=1, 
-    max_value=10, 
-    value=DEFAULT_BUCKET_SECONDS,
-    help="စာတန်းထိုးတစ်ခုအတွက် အများဆုံး ကြာချိန်ကို သတ်မှတ်သည်။ ကြာချိန်တိုလျှင် စာတန်းထိုးများ ပိုမိုပြောင်းလဲမည်။"
-)
-
-# အနည်းဆုံး စာတန်းထိုး ကြာချိန် slider
-min_duration_seconds = st.sidebar.slider(
-    "အနည်းဆုံး စာတန်းထိုး ကြာချိန် (စက္ကန့်)", 
-    min_value=0.1, 
-    max_value=2.0, 
-    value=DEFAULT_MIN_SUBTITLE_DURATION, 
-    step=0.1, 
-    help="စာတန်းထိုးတိုင်းသည် အနည်းဆုံး ကြာချိန်
