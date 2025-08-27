@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 import os
-import math
+import requests
 import tempfile
 import subprocess
-import deepl
 import streamlit as st
 
 # Use faster-whisper for word-level timestamps
@@ -18,8 +17,6 @@ from pydub import AudioSegment
 MODEL_SIZES = ["tiny", "base", "small", "medium", "large-v3"]
 DEFAULT_MODEL_SIZE = "base"
 MAX_CHARS_PER_SUB = 60
-DEFAULT_BUCKET_SECONDS = 5
-DEFAULT_MIN_SUBTITLE_DURATION = 0.5
 
 # ----------------------------
 # Helper Functions
@@ -44,18 +41,26 @@ def load_model(model_size: str):
         st.error("This could be due to a temporary issue with downloading the model. Please try reloading the page.")
         return None
 
-def translate_text_deepl(text: str, target_lang: str, api_key: str) -> str:
-    """Translates text using the DeepL API."""
-    if not api_key:
-        st.warning("DeepL API key is not provided. Skipping translation.")
-        return text
+def translate_text_mymemory(text: str, source_lang: str, target_lang: str = "en") -> str:
+    """Translates text using the free MyMemory API."""
+    if not text.strip():
+        return ""
+    
+    api_url = "https://api.mymemory.translated.net/get"
+    params = {
+        'q': text,
+        'langpair': f'{source_lang}|{target_lang}'
+    }
+    
     try:
-        translator = deepl.Translator(api_key)
-        result = translator.translate_text(text, target_lang=target_lang)
-        return result.text
+        response = requests.get(api_url, params=params)
+        response.raise_for_status() # Raise an exception for bad status codes
+        response_json = response.json()
+        
+        translated_text = response_json['responseData']['translatedText']
+        return translated_text
     except Exception as e:
-        st.error(f"DeepL translation failed: {e}")
-        st.info("Returning original transcribed text instead.")
+        st.warning(f"Translation failed due to an API error: {e}. Returning original text.")
         return text
 
 def transcribe_and_get_segments(_model: WhisperModel, audio_path: str):
@@ -63,42 +68,33 @@ def transcribe_and_get_segments(_model: WhisperModel, audio_path: str):
     Transcribes audio and returns segments with timestamps and detected language info.
     """
     st.info("Transcribing audio... This might take some time.")
-    # Set language to None for automatic language detection
-    segments, info = _model.transcribe(audio_path, beam_size=5, word_timestamps=False)
+    segments, info = _model.transcribe(audio_path, beam_size=5)
     
     st.success(f"Detected language: {info.language} with probability {info.language_probability:.2f}")
     
-    # segments is a generator, so we convert it to a list to reuse it
     return list(segments), info.language
 
-def create_srt_from_segments(segments: list, deepl_api_key: str) -> str:
+def create_srt_from_segments(segments: list, source_language: str) -> str:
     """
-    Creates SRT content from transcribed segments, with translation.
+    Creates SRT content from transcribed segments, with translation using MyMemory API.
     """
     srt_content = []
     
-    # Get DeepL API key from Streamlit secrets
-    translator_api_key = st.secrets.get("DEEPL_API_KEY")
-    if not translator_api_key:
-        st.error("DeepL API Key is not configured in Streamlit Secrets. Translation will be skipped.")
-        st.info("To enable translation, add your DeepL API key as a secret named 'DEEPL_API_KEY' in your Streamlit app settings.")
-
-    with st.spinner("Translating text segments to English via DeepL..."):
+    with st.spinner("Translating text segments to English via MyMemory API..."):
         for i, segment in enumerate(segments):
             original_text = segment.text.strip()
             
             # Translate the segment's text to English
-            translated_text = translate_text_deepl(original_text, "EN-US", translator_api_key)
+            translated_text = translate_text_mymemory(original_text, source_lang=source_language, target_lang="en")
 
             # Line breaking for long subtitles
             if len(translated_text) > MAX_CHARS_PER_SUB:
-                # Find a good place to break the line (e.g., a space)
                 break_point = translated_text.rfind(' ', 0, MAX_CHARS_PER_SUB)
                 if break_point != -1:
                     line1 = translated_text[:break_point]
                     line2 = translated_text[break_point+1:]
                     final_text = f"{line1.strip()}\n{line2.strip()}"
-                else: # If no space, just hard break
+                else:
                     final_text = f"{translated_text[:MAX_CHARS_PER_SUB]}\n{translated_text[MAX_CHARS_PER_SUB:]}"
             else:
                 final_text = translated_text
@@ -143,26 +139,21 @@ st.title("AI Video to Subtitle Generator 🎬")
 st.markdown("""
     Upload any video file. This app will:
     1.  **Extract the audio** using FFmpeg.
-    2.  **Detect the language** and transcribe it to text using a state-of-the-art Whisper model.
-    3.  **Translate the text to English** using the high-quality DeepL API.
+    2.  **Detect the language** and transcribe it to text using a Whisper model.
+    3.  **Translate the text to English** using the free MyMemory API.
     4.  **Generate an SRT subtitle file** with accurate timings.
 """)
 
-# Sidebar for configuration
 st.sidebar.header("Configuration")
 model_size = st.sidebar.selectbox("Whisper Model Size", MODEL_SIZES, index=MODEL_SIZES.index(DEFAULT_MODEL_SIZE),
-                                  help="Larger models are more accurate but slower. 'base' is a good starting point.")
+                                  help="Larger models are more accurate but slower. 'base' is a good balance.")
 
-st.sidebar.info("To enable translation, you must add your DeepL API key to the Streamlit app's secrets. See the deployment guide for instructions.")
-
+st.sidebar.info("This app uses the MyMemory API for free translation. No API key is required.")
 
 uploaded_file = st.file_uploader("Upload a video file (MP4, MOV, MKV, etc.)", type=["mp4", "mov", "mkv", "avi", "webm"])
 
 if uploaded_file is not None:
     st.video(uploaded_file)
-
-    if "DEEPL_API_KEY" not in st.secrets:
-        st.warning("Translation is disabled. Please add your `DEEPL_API_KEY` to your Streamlit secrets to enable it.", icon="🔑")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         temp_video_path = os.path.join(tmpdir, uploaded_file.name)
@@ -187,11 +178,11 @@ if uploaded_file is not None:
             st.error("No text could be transcribed from the audio. The audio might be silent or too noisy.")
             st.stop()
 
-        st.subheader("Original Transcription (Detected Language)")
-        original_text_preview = " ".join([seg.text for seg in segments])
+        st.subheader(f"Original Transcription (Detected Language: {detected_language.upper()})")
+        original_text_preview = " ".join([seg.text.strip() for seg in segments])
         st.text_area("Original Text", original_text_preview, height=150)
 
-        srt_text = create_srt_from_segments(segments, st.secrets.get("DEEPL_API_KEY"))
+        srt_text = create_srt_from_segments(segments, source_language=detected_language)
 
         st.success("SRT Subtitle Generation Complete!")
         st.subheader("Translated English Subtitles (SRT Preview)")
