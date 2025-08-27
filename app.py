@@ -4,34 +4,31 @@ import math
 import tempfile
 import subprocess
 import streamlit as st
+import openai # pip install openai
 
-
-# Use faster-whisper for word-level timestamps
+# Faster-Whisper ကို word-level timestamps အတွက် အသုံးပြုရန်
 # pip install faster-whisper
 from faster_whisper import WhisperModel
 
-# Use pydub for audio extraction
+# pydub ကို audio ထုတ်ယူရန် အသုံးပြုရန်
 # pip install pydub
 from pydub import AudioSegment
 
 # ----------------------------
-# Constants and UI Configuration
+# ကိန်းသေများ (Constants) နှင့် UI Configuration
 # ----------------------------
 MODEL_SIZES = ["tiny", "base", "small", "medium", "large-v2", "large-v3"]
-DEFAULT_MODEL_SIZE = "base" # Consider "small" or "medium" for better quality if resources allow
-MAX_CHARS_PER_SUB = 60 # Maximum characters per subtitle line
-DEFAULT_BUCKET_SECONDS = 5 # Default duration for subtitle buckets (maximum duration)
-DEFAULT_MIN_SUBTITLE_DURATION = 0.5 # Default minimum duration for a subtitle entry
-
-# Ensure FFmpeg is accessible (it's installed via packages.txt on Streamlit Cloud)
-# AudioSegment.converter = "ffmpeg" # Pydub finds it automatically if in PATH
+DEFAULT_MODEL_SIZE = "base" # အရည်အသွေး ပိုကောင်းစေရန် "small" (သို့) "medium" ကို ထည့်သွင်းစဉ်းစားနိုင်သည်
+MAX_CHARS_PER_SUB = 60 # စာတန်းထိုးတစ်ကြောင်းလျှင် အများဆုံး စာလုံးရေ
+DEFAULT_BUCKET_SECONDS = 5 # စာတန်းထိုးအစုအဝေးများအတွက် မူရင်းကြာချိန် (အများဆုံးကြာချိန်)
+DEFAULT_MIN_SUBTITLE_DURATION = 0.5 # စာတန်းထိုးတစ်ခုအတွက် အနည်းဆုံးပြသရမည့်ကြာချိန်
 
 # ----------------------------
-# Helper Functions
+# ကူညီပေးသည့် Functions များ (Helper Functions)
 # ----------------------------
 def hhmmss_ms(seconds: float) -> str:
     """
-    Converts seconds to SRT time format HH:MM:SS,mmm
+    စက္ကန့်ကို SRT အချိန် Format HH:MM:SS,mmm သို့ ပြောင်းလဲပေးသည်။
     """
     ms = int(round((seconds - int(seconds)) * 1000))
     total_seconds = int(seconds)
@@ -40,26 +37,28 @@ def hhmmss_ms(seconds: float) -> str:
     s = total_seconds % 60
     return f"{h:02}:{m:02}:{s:02},{ms:03}"
 
-@st.cache_resource
+# Faster-Whisper Model ကို ကောင်းစွာ cache လုပ်နိုင်ရန် hash_funcs ထည့်သွင်းထားသည်
+@st.cache_resource(hash_funcs={WhisperModel: lambda _: None})
 def load_model(model_size: str):
     """
-    Loads the Faster-Whisper model. Uses cache for efficiency.
+    Faster-Whisper model ကို load လုပ်သည်။ စွမ်းဆောင်ရည်အတွက် cache ကို အသုံးပြုသည်။
     """
-    st.info(f"Loading Faster-Whisper model: {model_size}. This may take a while for larger models.")
-    # compute_type="int8" is generally best for CPU to avoid ValueError on Streamlit Cloud
+    st.info(f"Faster-Whisper model ကို load လုပ်နေသည်- {model_size}။ Model ကြီးလျှင် အချိန်ကြာနိုင်သည်။")
+    # Streamlit Cloud CPU တွင် ValueError မဖြစ်စေရန် compute_type="int8" ကို အများအားဖြင့် အကောင်းဆုံးအဖြစ် သတ်မှတ်သည်။
     return WhisperModel(model_size, device="cpu", compute_type="int8")
 
-@st.cache_resource(hash_funcs={WhisperModel: lambda _: None}) # Exclude WhisperModel from hashing as it's unhashable
+# transcribe_words function မှာ `lang` parameter ကို လက်ခံရန် ပြင်ဆင်ထားသည်
+@st.cache_resource(hash_funcs={WhisperModel: lambda _: None}) # WhisperModel ကို hashing မှ ချန်လှပ်ထားသည်
 def transcribe_words(_model: WhisperModel, audio_path: str, lang: str = None):
     """
-    Transcribes audio using Faster-Whisper with word-level timestamps.
-    lang=None will auto-detect the language and transcribe in that language.
+    Faster-Whisper ကို အသုံးပြု၍ အသံကို စကားလုံးအဆင့် အချိန်မှတ်တမ်းများဖြင့် transcribe လုပ်သည်။
+    lang=None ဆိုလျှင် ဘာသာစကားကို အလိုအလျောက် သိရှိပြီး ထိုဘာသာစကားဖြင့် transcribe လုပ်သည်။
     """
-    st.info(f"Transcribing audio with word-level timestamps. Language set to: {lang if lang else 'Auto-detect'}")
+    st.info(f"အသံကို စကားလုံးအဆင့် အချိန်မှတ်တမ်းများဖြင့် transcribe လုပ်နေသည်။ ဘာသာစကား- {lang if lang else 'အလိုအလျောက် သိရှိမည်'}")
     segments, info = _model.transcribe(
         audio_path,
         word_timestamps=True, 
-        language=lang, # Set to None for auto-detection
+        language=lang, # ဤနေရာတွင် ပေးပို့လာသော lang parameter ကို အသုံးပြုမည်။
         beam_size=7 
     )
     words = []
@@ -68,24 +67,29 @@ def transcribe_words(_model: WhisperModel, audio_path: str, lang: str = None):
             words.append(word)
     
     detected_language = info.language
-    st.info(f"Detected language: {detected_language.upper()}")
+    st.info(f"သိရှိရသော ဘာသာစကား- {detected_language.upper()}")
     return words, detected_language
 
-def bucket_words_by_duration(words: list, bucket_seconds: int = 5, max_chars_per_sub: int = 60, min_subtitle_duration: float = 0.5) -> str:
+# ပြင်ဆင်ထားသည်- `word.text` ကို `word.word` အဖြစ် ပြောင်းလဲထားသည် (`bucket_words_by_duration` တွင်)
+def bucket_words_by_duration(words: list, bucket_seconds: int = 5, max_chars_per_sub: int = 60, min_subtitle_duration: float = 0.5) -> list:
     """
-    Creates SRT content by segmenting based on natural pauses (punctuation)
-    and then falling back to duration/character limits if needed.
-    Ensures each subtitle meets a minimum display duration.
+    သဘာဝအားဖြင့် ရပ်တန့်ခြင်း (ပုဒ်ဖြတ်ပုဒ်ရပ်များ) အပေါ် အခြေခံ၍ စာတန်းထိုး block များကို (dict များ၏ list) ဖန်တီးပြီး၊
+    လိုအပ်ပါက ကြာချိန်/စာလုံးရေ ကန့်သတ်ချက်များအတိုင်း ခွဲခြမ်းသည်။
+    စာတန်းထိုးတိုင်းသည် အနည်းဆုံးပြသရမည့်ကြာချိန်နှင့် ကိုက်ညီကြောင်း သေချာစေသည်။
     """
-    srt_content_blocks = [] # To store list of dicts for each subtitle block
+    # ဤနေရာတွင် subtitle_idx ကို အစောပိုင်း အစပျိုးပေးသည်
+    srt_content_blocks = [] # စာတန်းထိုး block တစ်ခုစီအတွက် dict များ၏ list ကို သိမ်းဆည်းရန်
+    subtitle_idx = 1
     current_words_in_segment = []
 
     def ends_with_punctuation(word_text):
-        # Handles common English and Chinese punctuation
+        # အင်္ဂလိပ်နှင့် တရုတ်ပုဒ်ဖြတ်ပုဒ်ရပ်များကို ကိုင်တွယ်သည်။
         return word_text.endswith(('.', '?', '!', ',', '。', '？', '！', '，'))
 
     for i, word in enumerate(words):
+        # ပြင်ဆင်ထားသည့်လိုင်း- faster-whisper ၏ WordInfo object structure အတွက် word.word ကို အသုံးပြုပါ။
         word_text = word.word 
+
         current_words_in_segment.append(word)
         
         segment_text = " ".join([w.word for w in current_words_in_segment]).strip()
@@ -106,7 +110,7 @@ def bucket_words_by_duration(words: list, bucket_seconds: int = 5, max_chars_per
             
             if i < len(words) - 1:
                 next_word_start = words[i+1].start
-                if (next_word_start - word.end) > 0.4: # Significant pause
+                if (next_word_start - word.end) > 0.4: # သိသာထင်ရှားသော ရပ်တန့်မှု (ဥပမာ: 0.4 စက္ကန့်)
                     punctuation_break = True
 
         duration_exceeded = segment_duration >= bucket_seconds
@@ -129,14 +133,14 @@ def bucket_words_by_duration(words: list, bucket_seconds: int = 5, max_chars_per
         if should_finalize:
             if current_words_in_segment:
                 start_time = current_words_in_segment[0].start
-                end_time = current_words_in_segment[-1].end + 0.02 # Add 20ms offset for smoother transition
+                end_time = current_words_in_segment[-1].end + 0.02 # ချောမွေ့သော ပြောင်းလဲမှုအတွက် 20ms offset ထပ်ထည့်သည်။
                 
                 if (end_time - start_time) < min_subtitle_duration:
                     end_time = start_time + min_subtitle_duration
 
                 subtitle_text = " ".join([w.word.strip() for w in current_words_in_segment]).strip()
                 
-                # Line breaking for readability
+                # ဖတ်ရလွယ်ကူစေရန် စာကြောင်းခွဲခြင်း
                 if len(subtitle_text) > max_chars_per_sub:
                     break_point = -1
                     for k in range(min(len(subtitle_text) -1, max_chars_per_sub -1), -1, -1):
@@ -163,9 +167,9 @@ def bucket_words_by_duration(words: list, bucket_seconds: int = 5, max_chars_per
                     })
                     subtitle_idx += 1
                 
-                current_words_in_segment = [] # Reset for next segment
+                current_words_in_segment = [] # နောက် segment အတွက် ပြန်လည်သတ်မှတ်သည်။
 
-    # Final check for any remaining words
+    # ကျန်ရှိသော စကားလုံးများအတွက် နောက်ဆုံးစစ်ဆေးမှု
     if current_words_in_segment:
         start_time = current_words_in_segment[0].start
         end_time = current_words_in_segment[-1].end + 0.02
@@ -198,10 +202,10 @@ def bucket_words_by_duration(words: list, bucket_seconds: int = 5, max_chars_per
                 "text": final_subtitle_text
             })
 
-    return srt_content_blocks # Return list of dicts for easier translation
+    return srt_content_blocks # ဘာသာပြန်ရန် ပိုမိုလွယ်ကူစေရန် dict များ၏ list ကို ပြန်ပေးသည်။
 
 def assemble_srt_text(srt_blocks):
-    """Assembles SRT text from a list of subtitle blocks."""
+    """Subtitle block များ၏ list မှ SRT text ကို ပေါင်းစည်းသည်။"""
     srt_output = []
     for block in srt_blocks:
         srt_output.append(str(block["id"]))
@@ -211,64 +215,64 @@ def assemble_srt_text(srt_blocks):
     return "\n".join(srt_output)
 
 
-# New Translation Function using OpenAI API
-@st.cache_data(show_spinner=False) # Cache translated results
+# OpenAI API ကို အသုံးပြုထားသော Translation Function အသစ်
+@st.cache_data(show_spinner=False) # ဘာသာပြန်ထားသော ရလဒ်များကို cache လုပ်သည်။
 def translate_text_openai(text_to_translate: str, target_language: str = "English", source_language: str = None) -> str:
     """
-    Translates text using OpenAI's Chat Completion API.
+    OpenAI ၏ Chat Completion API ကို အသုံးပြု၍ စာသားကို ဘာသာပြန်သည်။
     """
     if not st.secrets.get("openai_api_key"):
-        st.warning("OpenAI API key not found in Streamlit secrets. Translation will be skipped.")
+        st.warning("Streamlit secrets တွင် OpenAI API key မတွေ့ပါ။ ဘာသာပြန်ခြင်းကို ကျော်သွားပါမည်။")
         return text_to_translate
 
     try:
         client = openai.OpenAI(api_key=st.secrets["openai_api_key"])
         
-        system_prompt = f"You are a highly accurate translator. Translate the given text into {target_language}."
+        system_prompt = f"သင်သည် အလွန်တိကျသော ဘာသာပြန်သူတစ်ဦးဖြစ်သည်။ ပေးထားသော စာသားကို {target_language} သို့ ဘာသာပြန်ပါ။"
         if source_language:
-            system_prompt += f" The original language is {source_language}."
+            system_prompt += f" မူရင်းဘာသာစကားမှာ {source_language} ဖြစ်သည်။"
 
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo", # You can try "gpt-4" if you have access and need higher quality (higher cost)
+            model="gpt-3.5-turbo", # ပိုမိုကောင်းမွန်သော အရည်အသွေး လိုအပ်ပါက "gpt-4" ကို စမ်းသပ်နိုင်သည် (ကုန်ကျစရိတ်ပိုများသည်)
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": text_to_translate}
             ],
-            temperature=0.7, # Lower for more literal translation, higher for more creative
-            max_tokens=500 # Adjust based on expected output length
+            temperature=0.7, # တိကျသော ဘာသာပြန်အတွက် လျှော့ချပါ၊ ပိုမိုဖန်တီးမှုရှိသော ဘာသာပြန်အတွက် တိုးမြှင့်ပါ။
+            max_tokens=500 # မျှော်လင့်ထားသော output အရှည်ပေါ်မူတည်၍ ချိန်ညှိပါ။
         )
         translated_content = response.choices[0].message.content.strip()
         return translated_content
     except openai.APICallError as e:
-        st.error(f"OpenAI API Error: {e.response.status_code} - {e.response.json()['error']['message']}")
-        return f"[Translation Failed: {e.response.json()['error']['message']}] {text_to_translate}"
+        st.error(f"OpenAI API Error: {e.response.status_code} - {e.response.json().get('error', {}).get('message', 'အမည်မသိ အမှား')}")
+        return f"[ဘာသာပြန်မအောင်မြင်ပါ: {e.response.json().get('error', {}).get('message', 'အမည်မသိ အမှား')}] {text_to_translate}"
     except Exception as e:
-        st.error(f"An unexpected error occurred during OpenAI translation: {e}")
-        return f"[Translation Error] {text_to_translate}"
+        st.error(f"OpenAI ဘာသာပြန်နေစဉ် မမျှော်လင့်ထားသော အမှားတစ်ခု ဖြစ်ပေါ်ခဲ့သည်: {e}")
+        return f"[ဘာသာပြန် အမှား] {text_to_translate}"
 
 def ensure_ffmpeg_access():
     """
-    Ensures the ffmpeg executable is available in the system PATH.
-    It will be installed via packages.txt during deployment.
+    ffmpeg executable ကို system PATH တွင် ရှိနေကြောင်း သေချာစေသည်။
+    ၎င်းကို deployment အတွင်း packages.txt မှတဆင့် install လုပ်လိမ့်မည်။
     """
     try:
         subprocess.run(["ffmpeg", "-version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
         return True
     except FileNotFoundError:
-        st.error(f"FFmpeg executable not found. It should be installed via 'packages.txt'. Please check your packages.txt file and ensure it contains 'ffmpeg'.")
+        st.error(f"FFmpeg executable မတွေ့ပါ။ 'packages.txt' မှတဆင့် install လုပ်သင့်သည်။ သင်၏ packages.txt ဖိုင်ကို စစ်ဆေးပြီး 'ffmpeg' ပါဝင်ကြောင်း သေချာပါစေ။")
         return False
     except subprocess.CalledProcessError as e:
-        st.error(f"FFmpeg returned an error during version check: {e}. This might indicate a problem with the ffmpeg installation via packages.txt.")
+        st.error(f"FFmpeg version စစ်ဆေးနေစဉ် အမှားပြန်ပေးသည်: {e}။ ၎င်းသည် packages.txt မှတဆင့် ffmpeg install လုပ်ရာတွင် ပြဿနာရှိနိုင်ကြောင်း ပြသသည်။")
         return False
     except Exception as e:
-        st.error(f"An unexpected error occurred during FFmpeg setup: {e}. Please check your deployment logs for more details.")
+        st.error(f"FFmpeg setup လုပ်နေစဉ် မမျှော်လင့်ထားသော အမှားတစ်ခု ဖြစ်ပေါ်ခဲ့သည်: {e}။ ကျေးဇူးပြု၍ deployment logs များကို အသေးစိတ်ကြည့်ပါ။")
         return False
 
 def extract_audio_pydub(input_path: str, output_path: str, sr: int = 16000) -> str:
     """
-    Use pydub to extract mono wav @16kHz.
-    Pydub will automatically find 'ffmpeg' in the system PATH.
-    Returns the path to the extracted audio if successful, None otherwise.
+    pydub ကို အသုံးပြု၍ mono wav @16kHz ကို ထုတ်ယူသည်။
+    Pydub သည် system PATH တွင် 'ffmpeg' ကို အလိုအလျောက် ရှာဖွေလိမ့်မည်။
+    အောင်မြင်ပါက ထုတ်ယူထားသော audio ၏ path ကို ပြန်ပေးသည်၊ မဟုတ်ပါက None။
     """
     try:
         AudioSegment.converter = "ffmpeg"
@@ -276,140 +280,44 @@ def extract_audio_pydub(input_path: str, output_path: str, sr: int = 16000) -> s
         audio = audio.set_channels(1)  # Mono
         audio = audio.set_frame_rate(sr)  # 16kHz
         audio.export(output_path, format="wav")
-        st.success(f"Audio extracted successfully to {output_path}")
+        st.success(f"အသံကို အောင်မြင်စွာ ထုတ်ယူပြီးသည်- {output_path}")
         return output_path
     except Exception as e:
-        st.error(f"Error extracting audio with pydub (FFmpeg issue?): {e}. Please check your video file format and ensure 'ffmpeg' is installed correctly via packages.txt.")
+        st.error(f"pydub ဖြင့် အသံထုတ်ယူရာတွင် အမှားဖြစ်သည် (FFmpeg ပြဿနာ?): {e}။ သင်၏ video ဖိုင် format ကို စစ်ဆေးပြီး 'ffmpeg' ကောင်းစွာ အလုပ်လုပ်ကြောင်း သေချာပါစေ။")
         return None
 
 # ----------------------------
-# Streamlit App UI
+# Streamlit App UI (User Interface)
 # ----------------------------
 st.set_page_config(layout="wide", page_title="Universal Subtitle Generator")
 
 st.title("Universal Subtitle Generator 🎬")
 st.markdown("""
-    Upload a video file, and this app will:
-    1. Extract audio using FFmpeg (via pydub).
-    2. Transcribe the audio using the Faster-Whisper model with word-level timestamps (in its original language).
-    3. **(Optional) Translate the transcribed text to English using OpenAI API** (requires API key).
-    4. Generate an SRT subtitle file, intelligently segmenting lines based on punctuation, pauses, and configurable duration/character limits.
+    Video ဖိုင်တစ်ခုကို တင်ပါ။ ဤ app သည်-
+    1. FFmpeg (pydub မှတဆင့်) ကို အသုံးပြု၍ အသံကို ထုတ်ယူမည်။
+    2. Faster-Whisper model ကို အသုံးပြု၍ အသံကို စကားလုံးအဆင့် အချိန်မှတ်တမ်းများဖြင့် transcribe လုပ်မည် (မူရင်းဘာသာစကားဖြင့်)။
+    3. **(ရွေးချယ်နိုင်သည်) ဘာသာပြန်ထားသော စာသားကို OpenAI API ကို အသုံးပြု၍ အင်္ဂလိပ်လို ဘာသာပြန်မည်** (API key လိုအပ်သည်)။
+    4. ပုဒ်ဖြတ်ပုဒ်ရပ်များ၊ ရပ်တန့်မှုများ နှင့် configure လုပ်နိုင်သော ကြာချိန်/စာလုံးရေ ကန့်သတ်ချက်များအပေါ် အခြေခံ၍ စာကြောင်းများကို ဉာဏ်ရည်ထက်မြက်စွာ ပိုင်းခြားကာ SRT စာတန်းထိုးဖိုင်ကို ထုတ်ပေးမည်။
 """)
 
-# Sidebar for configuration
+# Configuration အတွက် Sidebar
 st.sidebar.header("Configuration")
-model_size = st.sidebar.selectbox("Choose Whisper Model Size", MODEL_SIZES, index=MODEL_SIZES.index(DEFAULT_MODEL_SIZE))
+model_size = st.sidebar.selectbox("Whisper Model Size ကို ရွေးပါ", MODEL_SIZES, index=MODEL_SIZES.index(DEFAULT_MODEL_SIZE))
 
-# Maximum subtitle duration slider
+# အများဆုံး စာတန်းထိုး ကြာချိန် slider
 bucket_seconds = st.sidebar.slider(
-    "Maximum Subtitle Duration (seconds)", 
+    "အများဆုံး စာတန်းထိုး ကြာချိန် (စက္ကန့်)", 
     min_value=1, 
     max_value=10, 
     value=DEFAULT_BUCKET_SECONDS,
-    help="Sets the maximum duration for a single subtitle entry. Shorter durations mean more frequent subtitle changes."
+    help="စာတန်းထိုးတစ်ခုအတွက် အများဆုံး ကြာချိန်ကို သတ်မှတ်သည်။ ကြာချိန်တိုလျှင် စာတန်းထိုးများ ပိုမိုပြောင်းလဲမည်။"
 )
 
-# Minimum subtitle duration slider
+# အနည်းဆုံး စာတန်းထိုး ကြာချိန် slider
 min_duration_seconds = st.sidebar.slider(
-    "Minimum Subtitle Duration (seconds)", 
+    "အနည်းဆုံး စာတန်းထိုး ကြာချိန် (စက္ကန့်)", 
     min_value=0.1, 
     max_value=2.0, 
     value=DEFAULT_MIN_SUBTITLE_DURATION, 
     step=0.1, 
-    help="Ensures each subtitle is displayed for at least this minimum duration. Prevents very short, flickering subtitles."
-)
-
-# Max Characters Per Subtitle Line slider
-max_chars = st.sidebar.slider(
-    "Max Characters Per Subtitle Line", 
-    min_value=20, 
-    max_value=100, 
-    value=MAX_CHARS_PER_SUB,
-    help="Sets the maximum number of characters allowed on a single line of subtitle text. Text exceeding this limit will be wrapped to the next line."
-)
-
-# Translation Toggle and Options
-st.sidebar.markdown("---")
-st.sidebar.header("Translation Options (OpenAI API)")
-enable_translation = st.sidebar.checkbox("Enable Translation to English", value=False,
-                                       help="If checked, the transcribed text will be translated to English using OpenAI's API. Requires an OpenAI API key in Streamlit secrets.")
-
-uploaded_file = st.file_uploader("Upload a video file (MP4, MOV, MKV, etc.)", type=["mp4", "mov", "mkv", "avi", "webm"])
-
-if uploaded_file is not None:
-    st.video(uploaded_file)
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        temp_video_path = os.path.join(tmpdir, uploaded_file.name)
-        temp_audio_path = os.path.join(tmpdir, f"{os.path.splitext(uploaded_file.name)[0]}.wav")
-
-        with open(temp_video_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        st.success(f"Video saved temporarily: {temp_video_path}")
-
-        with st.spinner("Checking FFmpeg setup..."):
-            if not ensure_ffmpeg_access():
-                st.error("Cannot proceed without a working FFmpeg setup. Please resolve the FFmpeg issue.")
-                st.stop()
-
-        with st.spinner("Extracting audio from video..."):
-            extracted_audio_path = extract_audio_pydub(temp_video_path, temp_audio_path)
-            if extracted_audio_path is None: 
-                st.error("Audio extraction failed. Please check the video file format and ensure FFmpeg is functioning correctly.")
-                st.stop()
-
-        with st.spinner(f"Loading Faster-Whisper model: {model_size} ..."):
-            model = load_model(model_size=model_size)
-
-        with st.spinner("Transcribing (word timestamps enabled)... This may take a while depending on audio length and model size."):
-            words, detected_lang = transcribe_words(_model=model, audio_path=extracted_audio_path, lang=None) 
-            if not words:
-                st.error("No words were detected. Please try a clearer audio or a different model size.")
-                st.stop()
-
-        with st.spinner("Building SRT with intelligent segmentation..."):
-            srt_blocks = bucket_words_by_duration(
-                words, 
-                bucket_seconds=bucket_seconds, 
-                max_chars_per_sub=max_chars, 
-                min_subtitle_duration=min_duration_seconds
-            )
-        
-        final_srt_text = ""
-        download_filename = os.path.splitext(uploaded_file.name)[0]
-
-        if enable_translation:
-            st.info(f"Translating subtitles from {detected_lang.upper()} to English using OpenAI API...")
-            translated_srt_blocks = []
-            
-            # OpenAI API calls can be slow, especially for many small requests.
-            # It's better to batch them if possible, but for simplicity, we translate block by block here.
-            # Consider a progress bar here for long videos.
-            progress_text = "Translation in progress. Please wait."
-            my_bar = st.progress(0, text=progress_text)
-            
-            for i, block in enumerate(srt_blocks):
-                translated_text = translate_text_openai(block["text"], target_language="English", source_language=detected_lang)
-                translated_block = block.copy()
-                translated_block["text"] = translated_text
-                translated_srt_blocks.append(translated_block)
-                my_bar.progress((i + 1) / len(srt_blocks), text=progress_text)
-            
-            my_bar.empty() # Remove progress bar when done
-            final_srt_text = assemble_srt_text(translated_srt_blocks)
-            download_filename += "_english_sub.srt"
-            st.success("Translation complete!")
-        else:
-            final_srt_text = assemble_srt_text(srt_blocks)
-            download_filename += f"_{detected_lang}_sub.srt"
-
-        st.success("Done!")
-        st.subheader("Preview (SRT)")
-        st.text_area("SRT Content", final_srt_text, height=320)
-
-        st.download_button(
-            "Download SRT",
-            data=final_srt_text.encode("utf-8"),
-            file_name=download_filename,
-            mime="text/plain"
-        )
+    help="စာတန်းထိုးတိုင်းသည် အနည်းဆုံး ကြာချိန်
