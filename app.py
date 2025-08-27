@@ -285,3 +285,133 @@ def extract_audio_pydub(input_path: str, output_path: str, sr: int = 16000) -> s
     except Exception as e:
         st.error(f"pydub ဖြင့် အသံထုတ်ယူရာတွင် အမှားဖြစ်သည် (FFmpeg ပြဿနာ?): {e}။ သင်၏ video ဖိုင် format ကို စစ်ဆေးပြီး 'ffmpeg' ကောင်းစွာ အလုပ်လုပ်ကြောင်း သေချာပါစေ။")
         return None
+
+# ----------------------------
+# Streamlit App UI (User Interface)
+# ----------------------------
+st.set_page_config(layout="wide", page_title="Universal Subtitle Generator")
+
+st.title("Universal Subtitle Generator 🎬")
+st.markdown("""
+    Video ဖိုင်တစ်ခုကို တင်ပါ။ ဤ app သည်-
+    1. FFmpeg (pydub မှတဆင့်) ကို အသုံးပြု၍ အသံကို ထုတ်ယူမည်။
+    2. Faster-Whisper model ကို အသုံးပြု၍ အသံကို စကားလုံးအဆင့် အချိန်မှတ်တမ်းများဖြင့် transcribe လုပ်မည် (မူရင်းဘာသာစကားဖြင့်)။
+    3. **(ရွေးချယ်နိုင်သည်) ဘာသာပြန်ထားသော စာသားကို OpenAI API ကို အသုံးပြု၍ အင်္ဂလိပ်လို ဘာသာပြန်မည်** (API key လိုအပ်သည်)။
+    4. ပုဒ်ဖြတ်ပုဒ်ရပ်များ၊ ရပ်တန့်မှုများ နှင့် configure လုပ်နိုင်သော ကြာချိန်/စာလုံးရေ ကန့်သတ်ချက်များအပေါ် အခြေခံ၍ စာကြောင်းများကို ဉာဏ်ရည်ထက်မြက်စွာ ပိုင်းခြားကာ SRT စာတန်းထိုးဖိုင်ကို ထုတ်ပေးမည်။
+""")
+
+# Configuration အတွက် Sidebar
+st.sidebar.header("Configuration")
+model_size = st.sidebar.selectbox("Whisper Model Size ကို ရွေးပါ", MODEL_SIZES, index=MODEL_SIZES.index(DEFAULT_MODEL_SIZE))
+
+# အများဆုံး စာတန်းထိုး ကြာချိန် slider
+bucket_seconds = st.sidebar.slider(
+    "အများဆုံး စာတန်းထိုး ကြာချိန် (စက္ကန့်)", 
+    min_value=1, 
+    max_value=10, 
+    value=DEFAULT_BUCKET_SECONDS,
+    help="စာတန်းထိုးတစ်ခုအတွက် အများဆုံး ကြာချိန်ကို သတ်မှတ်သည်။ ကြာချိန်တိုလျှင် စာတန်းထိုးများ ပိုမိုပြောင်းလဲမည်။"
+)
+
+# အနည်းဆုံး စာတန်းထိုး ကြာချိန် slider
+min_duration_seconds = st.sidebar.slider(
+    "အနည်းဆုံး စာတန်းထိုး ကြာချိန် (စက္ကန့်)", 
+    min_value=0.1, 
+    max_value=2.0, 
+    value=DEFAULT_MIN_SUBTITLE_DURATION, 
+    step=0.1, 
+    help="စာတန်းထိုးတိုင်းသည် အနည်းဆုံး ကြာချိန်အထိ ပြသကြောင်း သေချာစေသည်။ အလွန်တိုတောင်းသော၊ တဖျတ်ဖျတ်လင်းနေသော စာတန်းထိုးများကို ကာကွယ်ပေးသည်။"
+)
+
+# စာတန်းထိုးတစ်ကြောင်းလျှင် အများဆုံး စာလုံးရေ slider
+max_chars = st.sidebar.slider(
+    "စာတန်းထိုးတစ်ကြောင်းလျှင် အများဆုံး စာလုံးရေ", 
+    min_value=20, 
+    max_value=100, 
+    value=MAX_CHARS_PER_SUB,
+    help="စာတန်းထိုးစာသား၏ တစ်ကြောင်းတည်းတွင် ခွင့်ပြုထားသော အများဆုံး စာလုံးရေကို သတ်မှတ်သည်။ ဤကန့်သတ်ချက်ကို ကျော်လွန်သော စာသားကို နောက်တစ်ကြောင်းသို့ ပြောင်းလိမ့်မည်။"
+)
+
+# Translation Toggle နှင့် Options များ
+st.sidebar.markdown("---")
+st.sidebar.header("ဘာသာပြန် ရွေးချယ်စရာများ (OpenAI API)")
+enable_translation = st.sidebar.checkbox("အင်္ဂလိပ်လို ဘာသာပြန်ခြင်းကို ဖွင့်ပါ", value=False,
+                                       help="ဖွင့်ထားပါက၊ transcribe လုပ်ထားသော စာသားကို OpenAI API ကို အသုံးပြု၍ အင်္ဂလိပ်လို ဘာသာပြန်မည်။ Streamlit secrets တွင် OpenAI API key လိုအပ်သည်။")
+
+uploaded_file = st.file_uploader("Video ဖိုင်တစ်ခုကို တင်ပါ (MP4, MOV, MKV, etc.)", type=["mp4", "mov", "mkv", "avi", "webm"])
+
+if uploaded_file is not None:
+    st.video(uploaded_file)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        temp_video_path = os.path.join(tmpdir, uploaded_file.name)
+        temp_audio_path = os.path.join(tmpdir, f"{os.path.splitext(uploaded_file.name)[0]}.wav")
+
+        with open(temp_video_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        st.success(f"ဗီဒီယိုကို ယာယီသိမ်းဆည်းပြီးပြီ- {temp_video_path}")
+
+        with st.spinner("FFmpeg setup ကို စစ်ဆေးနေသည်..."):
+            if not ensure_ffmpeg_access():
+                st.error("FFmpeg setup ကောင်းစွာမရှိလျှင် ဆက်လက်လုပ်ဆောင်၍မရပါ။ FFmpeg ပြဿနာကို ဖြေရှင်းပါ။")
+                st.stop()
+
+        with st.spinner("ဗီဒီယိုမှ အသံကို ထုတ်ယူနေသည်..."):
+            extracted_audio_path = extract_audio_pydub(temp_video_path, temp_audio_path)
+            if extracted_audio_path is None: 
+                st.error("အသံထုတ်ယူခြင်း မအောင်မြင်ပါ။ ဗီဒီယိုဖိုင် format ကို စစ်ဆေးပြီး FFmpeg ကောင်းစွာ အလုပ်လုပ်ကြောင်း သေချာပါစေ။")
+                st.stop()
+
+        with st.spinner(f"Faster-Whisper model ကို load လုပ်နေသည်- {model_size} ..."):
+            model = load_model(model_size=model_size)
+
+        with st.spinner("Transcribe လုပ်နေသည် (စကားလုံး အချိန်မှတ်တမ်းများ ပါဝင်သည်)... အသံကြာချိန်နှင့် model size ပေါ်မူတည်၍ အချိန်ကြာနိုင်သည်။"):
+            # ဤနေရာတွင် ဘာသာစကားကို "zh" (Chinese) ဟု တိတိကျကျ သတ်မှတ်ထားသည်
+            words, detected_lang = transcribe_words(_model=model, audio_path=extracted_audio_path, lang="zh") 
+            if not words:
+                st.error("စကားလုံးများ တစ်ခုမှ မတွေ့ပါ။ ပိုမိုကြည်လင်သော အသံ သို့မဟုတ် မတူညီသော model size ကို စမ်းသပ်ကြည့်ပါ။")
+                st.stop()
+
+        with st.spinner("ဉာဏ်ရည်ထက်မြက်စွာ ခွဲခြမ်းစိတ်ဖြာ၍ SRT ကို တည်ဆောက်နေသည်..."):
+            srt_blocks = bucket_words_by_duration(
+                words, 
+                bucket_seconds=bucket_seconds, 
+                max_chars_per_sub=max_chars, 
+                min_subtitle_duration=min_duration_seconds
+            )
+        
+        final_srt_text = ""
+        download_filename = os.path.splitext(uploaded_file.name)[0]
+
+        if enable_translation:
+            st.info(f"OpenAI API ကို အသုံးပြု၍ {detected_lang.upper()} မှ အင်္ဂလိပ်လို စာတန်းထိုးများကို ဘာသာပြန်နေသည်...")
+            translated_srt_blocks = []
+            
+            progress_text = "ဘာသာပြန်နေသည်။ ခဏစောင့်ပါ။"
+            my_bar = st.progress(0, text=progress_text)
+            
+            for i, block in enumerate(srt_blocks):
+                translated_text = translate_text_openai(block["text"], target_language="English", source_language=detected_lang)
+                translated_block = block.copy()
+                translated_block["text"] = translated_text
+                translated_srt_blocks.append(translated_block)
+                my_bar.progress((i + 1) / len(srt_blocks), text=progress_text)
+            
+            my_bar.empty() # ပြီးဆုံးပါက progress bar ကို ဖယ်ရှားပါ။
+            final_srt_text = assemble_srt_text(translated_srt_blocks)
+            download_filename += "_english_sub.srt"
+            st.success("ဘာသာပြန်ခြင်း ပြီးစီးပါပြီ။")
+        else:
+            final_srt_text = assemble_srt_text(srt_blocks)
+            download_filename += f"_{detected_lang}_sub.srt"
+
+        st.success("ပြီးစီးပါပြီ။")
+        st.subheader("အစမ်းကြည့်ပါ (SRT)")
+        st.text_area("SRT အကြောင်းအရာ", final_srt_text, height=320)
+
+        st.download_button(
+            "SRT ကို Download လုပ်ပါ",
+            data=final_srt_text.encode("utf-8"),
+            file_name=download_filename,
+            mime="text/plain"
+        )
