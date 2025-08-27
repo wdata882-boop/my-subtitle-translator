@@ -1,4 +1,6 @@
-streamlit
-faster-whisper
-pydub
-openai
+streamlit>=1.33.0
+openai>=1.30.0
+moviepy>=1.0.3
+pytesseract>=0.3.10
+Pillow>=10.0.0
+googletrans-py==1.0.1
