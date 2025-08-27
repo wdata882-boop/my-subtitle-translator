@@ -125,7 +125,7 @@ if uploaded_file is not None:
                 dl_name = f"{base_name}_subtitles.srt"
                 st.download_button(
                     label="Download .SRT File",
-                    data=srt_content,
+                    data=srt_content.encode("utf-8"),
                     file_name=dl_name,
                     mime="text/plain"
                 )
