@@ -37,12 +37,12 @@ def transcribe_with_assemblyai(file_path: str):
     # Correct configuration for assemblyai==0.27.0
     # Features like OCR are passed directly as boolean arguments to TranscriptionConfig
     config = aai.TranscriptionConfig(
-        speech_model="conformer-2",
+        speech_model="conformer-2", # <-- ဤတစ်ကြောင်းတည်းကိုသာ ပြင်ဆင်ရန်လိုအပ်ပါသည်။ 'aai.SpeechModel.BEST' အစား model name ကို string အဖြစ်ထည့်ပါ။
         punctuate=True,
         format_text=True,
         speaker_labels=True,
         auto_highlights=True,
-        extract_text=True  # In this version, this is the correct way to enable OCR
+        extract_text=True
     )
 
     transcriber = aai.Transcriber()
