@@ -3,7 +3,7 @@ import os
 import tempfile
 import subprocess
 import streamlit as st
-import openai
+import assemblyai as aai
 from pydub import AudioSegment
 
 # ----------------------------
@@ -11,11 +11,13 @@ from pydub import AudioSegment
 # ----------------------------
 st.set_page_config(layout="wide", page_title="Advanced Subtitle Generator")
 
-st.title("Advanced AI Subtitle Generator (using OpenAI Whisper) 🚀")
+st.title("Advanced AI Subtitle Generator (using AssemblyAI) 🚀")
 st.markdown("""
-    Upload a video file. This app uses the **OpenAI Whisper API** for:
-    1.  **High Accuracy Transcription:** Get highly accurate text from audio.
-    2.  **SRT File Generation:** Create a perfectly timed subtitle file.
+    Upload a video file. This app uses the **AssemblyAI API** for:
+    1.  **Fast & Accurate Transcription:** Get highly accurate text from audio.
+    2.  **Speaker Labels:** Automatically detect and label different speakers.
+    3.  **Automatic Summarization:** Generate a summary of the conversation.
+    4.  **SRT File Generation:** Create a perfectly timed subtitle file.
 """)
 
 # ----------------------------
@@ -31,43 +33,45 @@ def ensure_ffmpeg_access():
         return False
 
 def extract_audio_pydub(input_path: str, output_path: str) -> str:
-    """Uses pydub to extract mono mp3."""
+    """Uses pydub to extract mono wav @16kHz."""
     try:
         audio = AudioSegment.from_file(input_path)
-        audio = audio.set_channels(1)
-        audio.export(output_path, format="mp3")
+        audio = audio.set_channels(1).set_frame_rate(16000)
+        audio.export(output_path, format="wav")
         return output_path
     except Exception as e:
         st.error(f"Audio extraction failed: {e}. Check if the file is a valid media format.")
         return None
 
-def transcribe_with_openai(audio_path: str):
+def transcribe_with_assemblyai(audio_path: str):
     """
-    Transcribes audio using OpenAI Whisper API and returns the transcript text.
+    Transcribes audio using AssemblyAI API and returns the transcript object.
     """
-    api_key = st.secrets.get("OPENAI_API_KEY")
+    api_key = st.secrets.get("ASSEMBLYAI_API_KEY")
     if not api_key:
-        st.error("OpenAI API Key is not configured in Streamlit Secrets.")
-        st.info("Please add your OpenAI API key as a secret named 'OPENAI_API_KEY'.")
+        st.error("AssemblyAI API Key is not configured in Streamlit Secrets.")
+        st.info("Please add your AssemblyAI API key as a secret named 'ASSEMBLYAI_API_KEY'.")
         return None
 
-    client = openai.OpenAI(api_key=api_key)
+    aai.settings.api_key = api_key
     
-    with st.spinner("Uploading audio and transcribing with OpenAI Whisper..."):
+    config = aai.TranscriptionConfig(
+        speaker_labels=True,
+        auto_highlights=True
+    )
+
+    transcriber = aai.Transcriber()
+    
+    with st.spinner("Uploading audio and transcribing with AssemblyAI... This is usually very fast!"):
         try:
-            with open(audio_path, "rb") as audio_file:
-                # Use the 'srt' response format to get timestamps
-                transcript = client.audio.transcriptions.create(
-                    model="whisper-1",
-                    file=audio_file,
-                    response_format="srt"
-                )
-        except openai.APIError as e:
-            st.error(f"OpenAI API failed: {e}")
-            return None
+            transcript = transcriber.transcribe(audio_path, config)
         except Exception as e:
-            st.error(f"Transcription failed: {e}")
+            st.error(f"AssemblyAI transcription failed: {e}")
             return None
+
+    if transcript.status == aai.TranscriptStatus.error:
+        st.error(f"Transcription failed: {transcript.error}")
+        return None
     
     return transcript
 
@@ -77,10 +81,10 @@ def transcribe_with_openai(audio_path: str):
 st.sidebar.header("Instructions")
 st.sidebar.info(
     """
-    1.  Get your free API key from [OpenAI](https://platform.openai.com/api-keys).
+    1.  Get your free API key from [AssemblyAI](https://www.assemblyai.com/).
     2.  In your Streamlit app's settings, add a new secret.
-    3.  Set the secret name to `OPENAI_API_KEY` and paste your key as the value.
-    4.  Upload a video and get your subtitles!
+    3.  Set the secret name to `ASSEMBLYAI_API_KEY` and paste your key as the value.
+    4.  Upload a video and enjoy the advanced features!
     """
 )
 
@@ -91,7 +95,7 @@ if uploaded_file is not None:
 
     with tempfile.TemporaryDirectory() as tmpdir:
         temp_video_path = os.path.join(tmpdir, uploaded_file.name)
-        temp_audio_path = os.path.join(tmpdir, "extracted_audio.mp3")
+        temp_audio_path = os.path.join(tmpdir, "extracted_audio.wav")
 
         with open(temp_video_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
@@ -104,21 +108,49 @@ if uploaded_file is not None:
         if not extracted_audio_path:
             st.stop()
 
-        srt_content = transcribe_with_openai(extracted_audio_path)
+        transcript = transcribe_with_assemblyai(extracted_audio_path)
 
-        if srt_content:
+        if transcript:
             st.success("Transcription Complete!")
             
-            st.subheader("SRT Subtitle File")
-            st.text_area("SRT Content", srt_content, height=300)
-            
-            base_name = os.path.splitext(uploaded_file.name)[0]
-            dl_name = f"{base_name}_subtitles.srt"
-            st.download_button(
-                label="Download .SRT File",
-                data=srt_content.encode("utf-8"),
-                file_name=dl_name,
-                mime="text/plain"
-            )
-        else:
-            st.info("No transcript found to generate subtitles.")
+            # Display results in tabs
+            tab1, tab2, tab3, tab4 = st.tabs(["📄 SRT Subtitles", "📝 Full Transcript", "👥 Speakers", "💡 Summary"])
+
+            with tab1:
+                st.subheader("SRT Subtitle File")
+                if transcript.text:
+                    # Using export_subtitles_srt() will give a complete SRT file
+                    srt_content = transcript.export_subtitles_srt()
+                    st.text_area("SRT Content", srt_content, height=300)
+                    
+                    base_name = os.path.splitext(uploaded_file.name)[0]
+                    dl_name = f"{base_name}_subtitles.srt"
+                    st.download_button(
+                        label="Download .SRT File",
+                        data=srt_content.encode("utf-8"),
+                        file_name=dl_name,
+                        mime="text/plain"
+                    )
+                else:
+                    st.info("No transcript found to generate subtitles.")
+
+            with tab2:
+                st.subheader("Full Transcript Text")
+                # Showing the full text from transcript.text
+                st.text_area("Full Text", transcript.text, height=300)
+
+            with tab3:
+                st.subheader("Transcript by Speaker")
+                if transcript.utterances:
+                    for utterance in transcript.utterances:
+                        st.markdown(f"**Speaker {utterance.speaker}:** {utterance.text}")
+                else:
+                    st.info("No speaker labels were detected in this audio.")
+
+            with tab4:
+                st.subheader("Conversation Summary")
+                if hasattr(transcript, 'highlights') and transcript.highlights:
+                    for result in transcript.highlights.results:
+                        st.markdown(f"- {result.text}")
+                else:
+                    st.info("No summary could be generated for this audio.")
