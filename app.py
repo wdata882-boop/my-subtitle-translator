@@ -120,10 +120,11 @@ if uploaded_file is not None:
             
             # Display results in tabs
             tabs = ["📄 SRT Subtitles", "📝 Full Transcript", "👥 Speakers", "💡 Summary"]
-    if transcript.text_extractions:
-        tabs.append("🔤 On-Screen Text (OCR)")
-
-    all_tabs = st.tabs(tabs)
+        if transcript.text_extractions:
+            tabs.append("🔤 On-Screen Text (OCR)")
+    
+        all_tabs = st.tabs(tabs)
+    
             with tab1:
                 st.subheader("SRT Subtitle File")
                 if transcript.text:
