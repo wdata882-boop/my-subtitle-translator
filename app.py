@@ -1,29 +1,51 @@
 # -*- coding: utf-8 -*-
 import os
 import tempfile
+import subprocess
 import streamlit as st
 import assemblyai as aai
+from pydub import AudioSegment
 
 # ----------------------------
 # UI Configuration
 # ----------------------------
 st.set_page_config(layout="wide", page_title="Advanced Subtitle Generator")
 
-st.title("Advanced AI Subtitle Generator (using AssemblyAI) 噫")
+st.title("Advanced AI Subtitle Generator (using AssemblyAI) 🚀")
 st.markdown("""
     Upload a video file. This app uses the **AssemblyAI API** for:
-    1.  **Best Accuracy Transcription:** Uses AssemblyAI's best model for top-tier accuracy.
+    1.  **Fast & Accurate Transcription:** Get highly accurate text from audio.
     2.  **Speaker Labels:** Automatically detect and label different speakers.
-    3.  **On-Screen Text Recognition (OCR):** Extracts text visible in the video.
-    4.  **Perfectly Formatted SRT:** Create a subtitle file with accurate timing and punctuation.
+    3.  **Automatic Summarization:** Generate a summary of the conversation.
+    4.  **SRT File Generation:** Create a perfectly timed subtitle file.
 """)
 
 # ----------------------------
 # Helper Functions
 # ----------------------------
-def transcribe_with_assemblyai(file_path: str):
+def ensure_ffmpeg_access():
+    """Ensures ffmpeg is available."""
+    try:
+        subprocess.run(["ffmpeg", "-version"], check=True, capture_output=True)
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        st.error("FFmpeg not found. It's required for audio extraction.")
+        return False
+
+def extract_audio_pydub(input_path: str, output_path: str) -> str:
+    """Uses pydub to extract mono wav @16kHz."""
+    try:
+        audio = AudioSegment.from_file(input_path)
+        audio = audio.set_channels(1).set_frame_rate(16000)
+        audio.export(output_path, format="wav")
+        return output_path
+    except Exception as e:
+        st.error(f"Audio extraction failed: {e}. Check if the file is a valid media format.")
+        return None
+
+def transcribe_with_assemblyai(audio_path: str):
     """
-    Transcribes a media file using the latest AssemblyAI SDK features.
+    Transcribes audio using AssemblyAI API and returns the transcript object.
     """
     api_key = st.secrets.get("ASSEMBLYAI_API_KEY")
     if not api_key:
@@ -33,30 +55,18 @@ def transcribe_with_assemblyai(file_path: str):
 
     aai.settings.api_key = api_key
     
-    # --- START OF FINAL CORRECTION for assemblyai v0.43.1 ---
-    # Create a features object for special features like OCR.
-    features = aai.TranscriptionFeatures(
-        extract_text=True  # OCR is enabled here
-    )
-
-    # General settings go into the main TranscriptionConfig.
-    # The 'features' object is passed into the config.
     config = aai.TranscriptionConfig(
-        punctuate=True,
-        format_text=True,
-        speaker_labels=True,
-        auto_highlights=True,
-        features=[features] # Pass the features object as a list
+        speaker_labels=True,      # Enable speaker diarization
+        auto_highlights=True      # Enable summarization
     )
-    # --- END OF FINAL CORRECTION ---
 
     transcriber = aai.Transcriber()
     
-    with st.spinner("Uploading file and processing with AssemblyAI... This may take a moment."):
+    with st.spinner("Uploading audio and transcribing with AssemblyAI... This is usually very fast!"):
         try:
-            transcript = transcriber.transcribe(file_path, config)
+            transcript = transcriber.transcribe(audio_path, config)
         except Exception as e:
-            st.error(f"AssemblyAI processing failed: {e}")
+            st.error(f"AssemblyAI transcription failed: {e}")
             return None
 
     if transcript.status == aai.TranscriptStatus.error:
@@ -85,23 +95,28 @@ if uploaded_file is not None:
 
     with tempfile.TemporaryDirectory() as tmpdir:
         temp_video_path = os.path.join(tmpdir, uploaded_file.name)
+        temp_audio_path = os.path.join(tmpdir, "extracted_audio.wav")
+
         with open(temp_video_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
         
-        transcript = transcribe_with_assemblyai(temp_video_path)
+        if not ensure_ffmpeg_access():
+            st.stop()
+
+        st.info("Extracting audio from video...")
+        extracted_audio_path = extract_audio_pydub(temp_video_path, temp_audio_path)
+        if not extracted_audio_path:
+            st.stop()
+
+        transcript = transcribe_with_assemblyai(extracted_audio_path)
 
         if transcript:
-            st.success("Processing Complete!")
+            st.success("Transcription Complete!")
             
-            tab_titles = ["📄 SRT Subtitles", "📝 Full Transcript", "👥 Speakers", "✨ Summary"]
-            
-            if transcript.text_extractions:
-                tab_titles.append("🖼️ On-Screen Text (OCR)")
-            
-            tabs = st.tabs(tab_titles)
+            # Display results in tabs
+            tab1, tab2, tab3, tab4 = st.tabs(["📄 SRT Subtitles", "📝 Full Transcript", "👥 Speakers", "💡 Summary"])
 
-            # Tab 1: SRT Subtitles
-            with tabs[0]:
+            with tab1:
                 st.subheader("SRT Subtitle File")
                 if transcript.text:
                     srt_content = transcript.export_subtitles_srt()
@@ -116,15 +131,13 @@ if uploaded_file is not None:
                         mime="text/plain"
                     )
                 else:
-                    st.info("No spoken words found to generate subtitles.")
+                    st.info("No transcript found to generate subtitles.")
 
-            # Tab 2: Full Transcript
-            with tabs[1]:
+            with tab2:
                 st.subheader("Full Transcript Text")
-                st.text_area("Full Text", transcript.text if transcript.text else "No text transcribed.", height=300)
+                st.text_area("Full Text", transcript.text, height=300)
 
-            # Tab 3: Speakers
-            with tabs[2]:
+            with tab3:
                 st.subheader("Transcript by Speaker")
                 if transcript.utterances:
                     for utterance in transcript.utterances:
@@ -132,21 +145,11 @@ if uploaded_file is not None:
                 else:
                     st.info("No speaker labels were detected in this audio.")
 
-            # Tab 4: Summary
-            with tabs[3]:
+            with tab4:
                 st.subheader("Conversation Summary")
-                if transcript.auto_highlights and transcript.auto_highlights.results:
-                    for result in transcript.auto_highlights.results:
-                        st.markdown(f"- {result.text} (found in {len(result.timestamps)} places)")
+                # Use hasattr and access highlights directly, no need for .results
+                if hasattr(transcript, 'highlights') and transcript.highlights:
+                    for result in transcript.highlights.results:
+                        st.markdown(f"- {result.text}")
                 else:
                     st.info("No summary could be generated for this audio.")
-            
-            # Tab 5: OCR Results (if any)
-            if transcript.text_extractions:
-                with tabs[-1]:
-                    st.subheader("Detected On-Screen Text (OCR)")
-                    for ocr_result in transcript.text_extractions:
-                        start_ms = ocr_result.timestamp.start
-                        end_ms = ocr_result.timestamp.end
-                        st.markdown(f"**Time:** `{start_ms//1000}s` to `{end_ms//1000}s`")
-                        st.info(ocr_result.text)
