@@ -37,7 +37,7 @@ def transcribe_with_assemblyai(file_path: str):
     # Correct configuration for assemblyai==0.27.0
     # Features like OCR are passed directly as boolean arguments to TranscriptionConfig
     config = aai.TranscriptionConfig(
-        speech_model=aai.SpeechModel.BEST,
+        speech_model="conformer-2",
         punctuate=True,
         format_text=True,
         speaker_labels=True,
