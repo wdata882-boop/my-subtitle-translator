@@ -62,6 +62,7 @@ def transcribe_with_assemblyai(audio_path: str):
         format_text=True,                   # Format text (e.g., casing)
         speaker_labels=True,                # Enable speaker diarization
         auto_highlights=True                # Enable summarization
+        extract_text=True
     )
 
     transcriber = aai.Transcriber()
@@ -118,8 +119,11 @@ if uploaded_file is not None:
             st.success("Transcription Complete!")
             
             # Display results in tabs
-            tab1, tab2, tab3, tab4 = st.tabs(["📄 SRT Subtitles", "📝 Full Transcript", "👥 Speakers", "💡 Summary"])
+            tabs = ["📄 SRT Subtitles", "📝 Full Transcript", "👥 Speakers", "💡 Summary"]
+    if transcript.text_extractions:
+        tabs.append("🔤 On-Screen Text (OCR)")
 
+    all_tabs = st.tabs(tabs)
             with tab1:
                 st.subheader("SRT Subtitle File")
                 if transcript.text:
@@ -156,3 +160,10 @@ if uploaded_file is not None:
                         st.markdown(f"- {result.text}")
                 else:
                     st.info("No summary could be generated for this audio.")
+
+    if transcript.text_extractions:
+        with all_tabs[-1]: # The last tab
+            st.subheader("Detected On-Screen Text (OCR)")
+            for ocr_result in transcript.text_extractions:
+                st.markdown(f"**Timestamp: `{ocr_result.timestamp.start}` - `{ocr_result.timestamp.end}`**")
+                st.info(ocr_result.text)
