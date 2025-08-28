@@ -24,7 +24,7 @@ st.markdown("""
 # ----------------------------
 def transcribe_with_assemblyai(file_path: str):
     """
-    Transcribes a media file using AssemblyAI API and returns the transcript object.
+    Transcribes a media file using the latest AssemblyAI SDK features.
     """
     api_key = st.secrets.get("ASSEMBLYAI_API_KEY")
     if not api_key:
@@ -33,16 +33,15 @@ def transcribe_with_assemblyai(file_path: str):
         return None
 
     aai.settings.api_key = api_key
-    
-    # Correct configuration for assemblyai==0.27.0
-    # Features like OCR are passed directly as boolean arguments to TranscriptionConfig
+
+    # Latest SDK configuration for all features, including OCR
     config = aai.TranscriptionConfig(
-        speech_model="conformer-2", # <-- ဤတစ်ကြောင်းတည်းကိုသာ ပြင်ဆင်ရန်လိုအပ်ပါသည်။ 'aai.SpeechModel.BEST' အစား model name ကို string အဖြစ်ထည့်ပါ။
+        speech_model="conformer-2",
+        speaker_labels=True,
         punctuate=True,
         format_text=True,
-        speaker_labels=True,
         auto_highlights=True,
-        extract_text=True
+        extract_text=True  # OCR is enabled this way in recent versions
     )
 
     transcriber = aai.Transcriber()
@@ -54,7 +53,7 @@ def transcribe_with_assemblyai(file_path: str):
             st.error(f"AssemblyAI processing failed: {e}")
             return None
 
-    if transcript.status == aai.TranscriptStatus.ERROR:
+    if transcript.status == aai.TranscriptStatus.error:
         st.error(f"Transcription failed: {transcript.error}")
         return None
     
