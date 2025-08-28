@@ -16,7 +16,7 @@ st.markdown("""
     Upload a video file. This app uses the **AssemblyAI API** for:
     1.  **Best Accuracy Transcription:** Uses AssemblyAI's best model for top-tier accuracy.
     2.  **Speaker Labels:** Automatically detect and label different speakers.
-    3.  **Automatic Summarization:** Generate a summary of the conversation.
+    3.  **On-Screen Text Recognition (OCR):** Extracts text visible in the video.
     4.  **Perfectly Formatted SRT:** Create a subtitle file with accurate timing and punctuation.
 """)
 
@@ -55,23 +55,24 @@ def transcribe_with_assemblyai(audio_path: str):
 
     aai.settings.api_key = api_key
     
-    # Enhanced configuration for best accuracy and formatting
+    # Enhanced configuration with OCR feature enabled
     config = aai.TranscriptionConfig(
-    speech_model=aai.SpeechModel.best,
-    punctuate=True,
-    format_text=True,
-    speaker_labels=True,
-    auto_highlights=True,
-    extract_text=True
+        speech_model=aai.SpeechModel.best,
+        punctuate=True,
+        format_text=True,
+        speaker_labels=True,
+        auto_highlights=True,
+        extract_text=True  # OCR feature is now enabled
     )
 
     transcriber = aai.Transcriber()
     
-    with st.spinner("Uploading audio and transcribing with AssemblyAI... This is usually very fast!"):
+    with st.spinner("Uploading file and processing with AssemblyAI... This may take a moment."):
         try:
+            # For video files with OCR, we submit the video path directly
             transcript = transcriber.transcribe(audio_path, config)
         except Exception as e:
-            st.error(f"AssemblyAI transcription failed: {e}")
+            st.error(f"AssemblyAI processing failed: {e}")
             return None
 
     if transcript.status == aai.TranscriptStatus.error:
@@ -93,39 +94,34 @@ st.sidebar.info(
     """
 )
 
+# NOTE: Since we are using OCR, we will upload the video file directly to AssemblyAI.
+# We no longer need to extract the audio first.
 uploaded_file = st.file_uploader("Upload a video file (MP4, MOV, MKV, etc.)", type=["mp4", "mov", "mkv", "avi", "webm"])
 
 if uploaded_file is not None:
     st.video(uploaded_file)
 
     with tempfile.TemporaryDirectory() as tmpdir:
+        # Save the uploaded video file to a temporary path
         temp_video_path = os.path.join(tmpdir, uploaded_file.name)
-        temp_audio_path = os.path.join(tmpdir, "extracted_audio.wav")
-
         with open(temp_video_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
         
-        if not ensure_ffmpeg_access():
-            st.stop()
-
-        st.info("Extracting audio from video...")
-        extracted_audio_path = extract_audio_pydub(temp_video_path, temp_audio_path)
-        if not extracted_audio_path:
-            st.stop()
-
-        transcript = transcribe_with_assemblyai(extracted_audio_path)
+        # We pass the VIDEO file path directly to the transcription function for OCR
+        transcript = transcribe_with_assemblyai(temp_video_path)
 
         if transcript:
-            st.success("Transcription Complete!")
+            st.success("Processing Complete!")
             
-            # Display results in tabs
-            tabs = ["📄 SRT Subtitles", "📝 Full Transcript", "👥 Speakers", "💡 Summary"]
-        if transcript.text_extractions:
-            tabs.append("🔤 On-Screen Text (OCR)")
-    
-        all_tabs = st.tabs(tabs)
-    
-            with tab1:
+            # Dynamically create tabs based on available results
+            tab_titles = ["📄 SRT Subtitles", "📝 Full Transcript", "👥 Speakers", "💡 Summary"]
+            if transcript.text_extractions:
+                tab_titles.append("🔤 On-Screen Text (OCR)")
+            
+            tabs = st.tabs(tab_titles)
+
+            # Tab 1: SRT Subtitles
+            with tabs[0]:
                 st.subheader("SRT Subtitle File")
                 if transcript.text:
                     srt_content = transcript.export_subtitles_srt()
@@ -140,13 +136,15 @@ if uploaded_file is not None:
                         mime="text/plain"
                     )
                 else:
-                    st.info("No transcript found to generate subtitles.")
+                    st.info("No spoken words found to generate subtitles.")
 
-            with tab2:
+            # Tab 2: Full Transcript
+            with tabs[1]:
                 st.subheader("Full Transcript Text")
                 st.text_area("Full Text", transcript.text, height=300)
 
-            with tab3:
+            # Tab 3: Speakers
+            with tabs[2]:
                 st.subheader("Transcript by Speaker")
                 if transcript.utterances:
                     for utterance in transcript.utterances:
@@ -154,17 +152,22 @@ if uploaded_file is not None:
                 else:
                     st.info("No speaker labels were detected in this audio.")
 
-            with tab4:
+            # Tab 4: Summary
+            with tabs[3]:
                 st.subheader("Conversation Summary")
                 if transcript.highlights:
                     for result in transcript.highlights.results:
                         st.markdown(f"- {result.text}")
                 else:
                     st.info("No summary could be generated for this audio.")
-
-    if transcript.text_extractions:
-        with all_tabs[-1]: # The last tab
-            st.subheader("Detected On-Screen Text (OCR)")
-            for ocr_result in transcript.text_extractions:
-                st.markdown(f"**Timestamp: `{ocr_result.timestamp.start}` - `{ocr_result.timestamp.end}`**")
-                st.info(ocr_result.text)
+            
+            # Tab 5: OCR Results (if any)
+            if transcript.text_extractions:
+                with tabs[4]:
+                    st.subheader("Detected On-Screen Text (OCR)")
+                    for ocr_result in transcript.text_extractions:
+                        # Format timestamp for better readability
+                        start_ms = ocr_result.timestamp.start
+                        end_ms = ocr_result.timestamp.end
+                        st.markdown(f"**Time:** `{start_ms//1000}s` to `{end_ms//1000}s`")
+                        st.info(ocr_result.text)
