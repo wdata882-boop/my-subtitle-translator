@@ -4,7 +4,6 @@ import tempfile
 import subprocess
 import streamlit as st
 import assemblyai as aai
-from pydub import AudioSegment
 
 # ----------------------------
 # UI Configuration
@@ -26,7 +25,6 @@ st.markdown("""
 def transcribe_with_assemblyai(file_path: str):
     """
     Transcribes a media file using AssemblyAI API and returns the transcript object.
-    This function handles both audio and video files.
     """
     api_key = st.secrets.get("ASSEMBLYAI_API_KEY")
     if not api_key:
@@ -36,19 +34,15 @@ def transcribe_with_assemblyai(file_path: str):
 
     aai.settings.api_key = api_key
     
-    # Correct configuration for the latest AssemblyAI SDK version
-    # OCR is enabled via `features` parameter, not `extract_text`
-    features = aai.TranscriptionFeatures(
-        extract_text=True  # This is the correct way to enable OCR
-    )
-    
+    # Correct configuration for assemblyai==0.27.0
+    # Features like OCR are passed directly as boolean arguments to TranscriptionConfig
     config = aai.TranscriptionConfig(
         speech_model=aai.SpeechModel.BEST,
         punctuate=True,
         format_text=True,
         speaker_labels=True,
         auto_highlights=True,
-        features=[features]  # Pass the features object here
+        extract_text=True  # In this version, this is the correct way to enable OCR
     )
 
     transcriber = aai.Transcriber()
@@ -96,7 +90,8 @@ if uploaded_file is not None:
             
             # Dynamically create tabs based on available results
             tab_titles = ["📄 SRT Subtitles", "📝 Full Transcript", "👥 Speakers", "💡 Summary"]
-            if transcript.text_extractions and transcript.text_extractions.results:
+            # Check for OCR results using the correct attribute for this version
+            if hasattr(transcript, 'text_extractions') and transcript.text_extractions:
                 tab_titles.append("🔤 On-Screen Text (OCR)")
             
             tabs = st.tabs(tab_titles)
@@ -143,10 +138,10 @@ if uploaded_file is not None:
                     st.info("No summary could be generated for this audio.")
             
             # Tab 5: OCR Results (if any)
-            if transcript.text_extractions and transcript.text_extractions.results:
+            if hasattr(transcript, 'text_extractions') and transcript.text_extractions:
                 with tabs[-1]: # Always access the last tab for OCR
                     st.subheader("Detected On-Screen Text (OCR)")
-                    for ocr_result in transcript.text_extractions.results:
+                    for ocr_result in transcript.text_extractions:
                         start_ms = ocr_result.timestamp.start
                         end_ms = ocr_result.timestamp.end
                         st.markdown(f"**Time:** `{start_ms//1000}s` to `{end_ms//1000}s`")
