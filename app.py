@@ -3,7 +3,7 @@ import os
 import tempfile
 import subprocess
 import streamlit as st
-import assemblyai as aai
+import assemblyai as ai
 from pydub import AudioSegment
 
 # ----------------------------
