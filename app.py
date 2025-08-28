@@ -56,8 +56,6 @@ def transcribe_with_assemblyai(audio_path: str):
     
     config = aai.TranscriptionConfig(
         speaker_labels=True,
-        # We temporarily remove auto_highlights to ensure a full transcript
-        # auto_highlights=True 
     )
 
     transcriber = aai.Transcriber()
@@ -113,7 +111,6 @@ if uploaded_file is not None:
         if transcript:
             st.success("Transcription Complete!")
             
-            # Display results in tabs
             tab1, tab2, tab3 = st.tabs(["📄 SRT Subtitles", "📝 Full Transcript", "👥 Speakers"])
 
             with tab1:
