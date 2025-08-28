@@ -14,10 +14,10 @@ st.set_page_config(layout="wide", page_title="Advanced Subtitle Generator")
 st.title("Advanced AI Subtitle Generator (using AssemblyAI) 🚀")
 st.markdown("""
     Upload a video file. This app uses the **AssemblyAI API** for:
-    1.  **Fast & Accurate Transcription:** Get highly accurate text from audio.
+    1.  **Best Accuracy Transcription:** Uses AssemblyAI's best model for top-tier accuracy.
     2.  **Speaker Labels:** Automatically detect and label different speakers.
     3.  **Automatic Summarization:** Generate a summary of the conversation.
-    4.  **SRT File Generation:** Create a perfectly timed subtitle file.
+    4.  **Perfectly Formatted SRT:** Create a subtitle file with accurate timing and punctuation.
 """)
 
 # ----------------------------
@@ -55,9 +55,13 @@ def transcribe_with_assemblyai(audio_path: str):
 
     aai.settings.api_key = api_key
     
+    # Enhanced configuration for best accuracy and formatting
     config = aai.TranscriptionConfig(
-        speaker_labels=True,      # Enable speaker diarization
-        auto_highlights=True      # Enable summarization
+        speech_model=aai.SpeechModel.best,  # Use the best available model for highest accuracy
+        punctuate=True,                     # Add punctuation automatically
+        format_text=True,                   # Format text (e.g., casing)
+        speaker_labels=True,                # Enable speaker diarization
+        auto_highlights=True                # Enable summarization
     )
 
     transcriber = aai.Transcriber()
@@ -147,7 +151,7 @@ if uploaded_file is not None:
 
             with tab4:
                 st.subheader("Conversation Summary")
-                if hasattr(transcript, 'highlights') and transcript.highlights:
+                if transcript.highlights:
                     for result in transcript.highlights.results:
                         st.markdown(f"- {result.text}")
                 else:
