@@ -6,10 +6,6 @@ import subprocess
 
 import streamlit as st
 
-# Use faster-whisper for word-level timestamps
-# pip install faster-whisper
-from faster_whisper import WhisperModel
-
 # Use pydub for audio extraction with explicit ffmpeg path
 # pip install pydub
 from pydub import AudioSegment
