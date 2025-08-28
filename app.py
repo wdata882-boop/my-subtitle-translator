@@ -33,30 +33,32 @@ def transcribe_with_assemblyai(file_path: str):
 
     aai.settings.api_key = api_key
     
-    # --- START OF CORRECTION ---
-    # The new version of the AssemblyAI SDK is simpler.
-    # All features are boolean flags inside TranscriptionConfig.
-    # We no longer need to specify `speech_model` as it uses the best by default.
+    # --- START OF FINAL CORRECTION for assemblyai v0.43.1 ---
+    # Create a features object for special features like OCR.
+    features = aai.TranscriptionFeatures(
+        extract_text=True  # OCR is enabled here
+    )
+
+    # General settings go into the main TranscriptionConfig.
+    # The 'features' object is passed into the config.
     config = aai.TranscriptionConfig(
         punctuate=True,
         format_text=True,
         speaker_labels=True,
         auto_highlights=True,
-        extract_text=True  # This is the correct way to enable OCR in the new version
+        features=[features] # Pass the features object as a list
     )
-    # --- END OF CORRECTION ---
+    # --- END OF FINAL CORRECTION ---
 
     transcriber = aai.Transcriber()
     
     with st.spinner("Uploading file and processing with AssemblyAI... This may take a moment."):
         try:
-            # Pass the file path and the config object to the transcribe method
             transcript = transcriber.transcribe(file_path, config)
         except Exception as e:
             st.error(f"AssemblyAI processing failed: {e}")
             return None
 
-    # Use TranscriptStatus.error in the new version
     if transcript.status == aai.TranscriptStatus.error:
         st.error(f"Transcription failed: {transcript.error}")
         return None
@@ -91,12 +93,10 @@ if uploaded_file is not None:
         if transcript:
             st.success("Processing Complete!")
             
-            # Dynamically create tabs based on available results
-            tab_titles = ["SRT Subtitles", "Full Transcript", "Speakers", "Summary"]
+            tab_titles = ["📄 SRT Subtitles", "📝 Full Transcript", "👥 Speakers", "✨ Summary"]
             
-            # Check for OCR results (now called content_safety_labels in some contexts, but we check text_extractions)
             if transcript.text_extractions:
-                tab_titles.append("On-Screen Text (OCR)")
+                tab_titles.append("🖼️ On-Screen Text (OCR)")
             
             tabs = st.tabs(tab_titles)
 
@@ -143,7 +143,7 @@ if uploaded_file is not None:
             
             # Tab 5: OCR Results (if any)
             if transcript.text_extractions:
-                with tabs[-1]: # Always access the last tab for OCR
+                with tabs[-1]:
                     st.subheader("Detected On-Screen Text (OCR)")
                     for ocr_result in transcript.text_extractions:
                         start_ms = ocr_result.timestamp.start
