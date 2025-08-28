@@ -4,6 +4,7 @@ import tempfile
 import streamlit as st
 import openai
 from pydub import AudioSegment
+import subprocess # This line is added to fix the NameError
 
 # ----------------------------
 # UI Configuration
