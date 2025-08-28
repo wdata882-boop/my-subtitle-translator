@@ -23,29 +23,10 @@ st.markdown("""
 # ----------------------------
 # Helper Functions
 # ----------------------------
-def ensure_ffmpeg_access():
-    """Ensures ffmpeg is available."""
-    try:
-        subprocess.run(["ffmpeg", "-version"], check=True, capture_output=True)
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        st.error("FFmpeg not found. It's required for audio extraction.")
-        return False
-
-def extract_audio_pydub(input_path: str, output_path: str) -> str:
-    """Uses pydub to extract mono wav @16kHz."""
-    try:
-        audio = AudioSegment.from_file(input_path)
-        audio = audio.set_channels(1).set_frame_rate(16000)
-        audio.export(output_path, format="wav")
-        return output_path
-    except Exception as e:
-        st.error(f"Audio extraction failed: {e}. Check if the file is a valid media format.")
-        return None
-
-def transcribe_with_assemblyai(audio_path: str):
+def transcribe_with_assemblyai(file_path: str):
     """
-    Transcribes audio using AssemblyAI API and returns the transcript object.
+    Transcribes a media file using AssemblyAI API and returns the transcript object.
+    This function handles both audio and video files.
     """
     api_key = st.secrets.get("ASSEMBLYAI_API_KEY")
     if not api_key:
@@ -55,27 +36,31 @@ def transcribe_with_assemblyai(audio_path: str):
 
     aai.settings.api_key = api_key
     
-    # Enhanced configuration with OCR feature enabled
+    # Correct configuration for the latest AssemblyAI SDK version
+    # OCR is enabled via `features` parameter, not `extract_text`
+    features = aai.TranscriptionFeatures(
+        extract_text=True  # This is the correct way to enable OCR
+    )
+    
     config = aai.TranscriptionConfig(
-        speech_model=aai.SpeechModel.best,
+        speech_model=aai.SpeechModel.BEST,
         punctuate=True,
         format_text=True,
         speaker_labels=True,
         auto_highlights=True,
-        extract_text=True  # OCR feature is now enabled
+        features=[features]  # Pass the features object here
     )
 
     transcriber = aai.Transcriber()
     
     with st.spinner("Uploading file and processing with AssemblyAI... This may take a moment."):
         try:
-            # For video files with OCR, we submit the video path directly
-            transcript = transcriber.transcribe(audio_path, config)
+            transcript = transcriber.transcribe(file_path, config)
         except Exception as e:
             st.error(f"AssemblyAI processing failed: {e}")
             return None
 
-    if transcript.status == aai.TranscriptStatus.error:
+    if transcript.status == aai.TranscriptStatus.ERROR:
         st.error(f"Transcription failed: {transcript.error}")
         return None
     
@@ -94,20 +79,16 @@ st.sidebar.info(
     """
 )
 
-# NOTE: Since we are using OCR, we will upload the video file directly to AssemblyAI.
-# We no longer need to extract the audio first.
 uploaded_file = st.file_uploader("Upload a video file (MP4, MOV, MKV, etc.)", type=["mp4", "mov", "mkv", "avi", "webm"])
 
 if uploaded_file is not None:
     st.video(uploaded_file)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Save the uploaded video file to a temporary path
         temp_video_path = os.path.join(tmpdir, uploaded_file.name)
         with open(temp_video_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
         
-        # We pass the VIDEO file path directly to the transcription function for OCR
         transcript = transcribe_with_assemblyai(temp_video_path)
 
         if transcript:
@@ -115,7 +96,7 @@ if uploaded_file is not None:
             
             # Dynamically create tabs based on available results
             tab_titles = ["📄 SRT Subtitles", "📝 Full Transcript", "👥 Speakers", "💡 Summary"]
-            if transcript.text_extractions:
+            if transcript.text_extractions and transcript.text_extractions.results:
                 tab_titles.append("🔤 On-Screen Text (OCR)")
             
             tabs = st.tabs(tab_titles)
@@ -141,7 +122,7 @@ if uploaded_file is not None:
             # Tab 2: Full Transcript
             with tabs[1]:
                 st.subheader("Full Transcript Text")
-                st.text_area("Full Text", transcript.text, height=300)
+                st.text_area("Full Text", transcript.text if transcript.text else "No text transcribed.", height=300)
 
             # Tab 3: Speakers
             with tabs[2]:
@@ -155,18 +136,17 @@ if uploaded_file is not None:
             # Tab 4: Summary
             with tabs[3]:
                 st.subheader("Conversation Summary")
-                if transcript.highlights:
+                if transcript.highlights and transcript.highlights.results:
                     for result in transcript.highlights.results:
-                        st.markdown(f"- {result.text}")
+                        st.markdown(f"- {result.text} (found in {len(result.timestamps)} places)")
                 else:
                     st.info("No summary could be generated for this audio.")
             
             # Tab 5: OCR Results (if any)
-            if transcript.text_extractions:
-                with tabs[4]:
+            if transcript.text_extractions and transcript.text_extractions.results:
+                with tabs[-1]: # Always access the last tab for OCR
                     st.subheader("Detected On-Screen Text (OCR)")
-                    for ocr_result in transcript.text_extractions:
-                        # Format timestamp for better readability
+                    for ocr_result in transcript.text_extractions.results:
                         start_ms = ocr_result.timestamp.start
                         end_ms = ocr_result.timestamp.end
                         st.markdown(f"**Time:** `{start_ms//1000}s` to `{end_ms//1000}s`")
