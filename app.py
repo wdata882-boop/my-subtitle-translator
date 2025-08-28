@@ -16,8 +16,7 @@ st.markdown("""
     Upload a video file. This app uses the **AssemblyAI API** for:
     1.  **Fast & Accurate Transcription:** Get highly accurate text from audio.
     2.  **Speaker Labels:** Automatically detect and label different speakers.
-    3.  **Automatic Summarization:** Generate a summary of the conversation.
-    4.  **SRT File Generation:** Create a perfectly timed subtitle file.
+    3.  **SRT File Generation:** Create a perfectly timed subtitle file.
 """)
 
 # ----------------------------
@@ -57,7 +56,8 @@ def transcribe_with_assemblyai(audio_path: str):
     
     config = aai.TranscriptionConfig(
         speaker_labels=True,
-        auto_highlights=True
+        # We temporarily remove auto_highlights to ensure a full transcript
+        # auto_highlights=True 
     )
 
     transcriber = aai.Transcriber()
@@ -114,12 +114,11 @@ if uploaded_file is not None:
             st.success("Transcription Complete!")
             
             # Display results in tabs
-            tab1, tab2, tab3, tab4 = st.tabs(["📄 SRT Subtitles", "📝 Full Transcript", "👥 Speakers", "💡 Summary"])
+            tab1, tab2, tab3 = st.tabs(["📄 SRT Subtitles", "📝 Full Transcript", "👥 Speakers"])
 
             with tab1:
                 st.subheader("SRT Subtitle File")
                 if transcript.text:
-                    # Using export_subtitles_srt() will give a complete SRT file
                     srt_content = transcript.export_subtitles_srt()
                     st.text_area("SRT Content", srt_content, height=300)
                     
@@ -136,7 +135,6 @@ if uploaded_file is not None:
 
             with tab2:
                 st.subheader("Full Transcript Text")
-                # Showing the full text from transcript.text
                 st.text_area("Full Text", transcript.text, height=300)
 
             with tab3:
@@ -146,11 +144,3 @@ if uploaded_file is not None:
                         st.markdown(f"**Speaker {utterance.speaker}:** {utterance.text}")
                 else:
                     st.info("No speaker labels were detected in this audio.")
-
-            with tab4:
-                st.subheader("Conversation Summary")
-                if hasattr(transcript, 'highlights') and transcript.highlights:
-                    for result in transcript.highlights.results:
-                        st.markdown(f"- {result.text}")
-                else:
-                    st.info("No summary could be generated for this audio.")
