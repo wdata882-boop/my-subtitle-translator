@@ -57,12 +57,12 @@ def transcribe_with_assemblyai(audio_path: str):
     
     # Enhanced configuration for best accuracy and formatting
     config = aai.TranscriptionConfig(
-        speech_model=aai.SpeechModel.best,  # Use the best available model for highest accuracy
-        punctuate=True,                     # Add punctuation automatically
-        format_text=True,                   # Format text (e.g., casing)
-        speaker_labels=True,                # Enable speaker diarization
-        auto_highlights=True                # Enable summarization
-        extract_text=True
+    speech_model=aai.SpeechModel.best,
+    punctuate=True,
+    format_text=True,
+    speaker_labels=True,
+    auto_highlights=True,
+    extract_text=True
     )
 
     transcriber = aai.Transcriber()
