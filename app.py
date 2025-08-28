@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 import os
 import tempfile
-import subprocess
 import streamlit as st
 import assemblyai as aai
 
@@ -10,7 +9,7 @@ import assemblyai as aai
 # ----------------------------
 st.set_page_config(layout="wide", page_title="Advanced Subtitle Generator")
 
-st.title("Advanced AI Subtitle Generator (using AssemblyAI) 🚀")
+st.title("Advanced AI Subtitle Generator (using AssemblyAI) 噫")
 st.markdown("""
     Upload a video file. This app uses the **AssemblyAI API** for:
     1.  **Best Accuracy Transcription:** Uses AssemblyAI's best model for top-tier accuracy.
@@ -33,26 +32,31 @@ def transcribe_with_assemblyai(file_path: str):
         return None
 
     aai.settings.api_key = api_key
-
-    # Latest SDK configuration for all features, including OCR
+    
+    # --- START OF CORRECTION ---
+    # The new version of the AssemblyAI SDK is simpler.
+    # All features are boolean flags inside TranscriptionConfig.
+    # We no longer need to specify `speech_model` as it uses the best by default.
     config = aai.TranscriptionConfig(
-        speech_model="conformer-2",
-        speaker_labels=True,
         punctuate=True,
         format_text=True,
+        speaker_labels=True,
         auto_highlights=True,
-        extract_text=True  # OCR is enabled this way in recent versions
+        extract_text=True  # This is the correct way to enable OCR in the new version
     )
+    # --- END OF CORRECTION ---
 
     transcriber = aai.Transcriber()
     
     with st.spinner("Uploading file and processing with AssemblyAI... This may take a moment."):
         try:
+            # Pass the file path and the config object to the transcribe method
             transcript = transcriber.transcribe(file_path, config)
         except Exception as e:
             st.error(f"AssemblyAI processing failed: {e}")
             return None
 
+    # Use TranscriptStatus.error in the new version
     if transcript.status == aai.TranscriptStatus.error:
         st.error(f"Transcription failed: {transcript.error}")
         return None
@@ -88,10 +92,11 @@ if uploaded_file is not None:
             st.success("Processing Complete!")
             
             # Dynamically create tabs based on available results
-            tab_titles = ["📄 SRT Subtitles", "📝 Full Transcript", "👥 Speakers", "💡 Summary"]
-            # Check for OCR results using the correct attribute for this version
-            if hasattr(transcript, 'text_extractions') and transcript.text_extractions:
-                tab_titles.append("🔤 On-Screen Text (OCR)")
+            tab_titles = ["SRT Subtitles", "Full Transcript", "Speakers", "Summary"]
+            
+            # Check for OCR results (now called content_safety_labels in some contexts, but we check text_extractions)
+            if transcript.text_extractions:
+                tab_titles.append("On-Screen Text (OCR)")
             
             tabs = st.tabs(tab_titles)
 
@@ -130,14 +135,14 @@ if uploaded_file is not None:
             # Tab 4: Summary
             with tabs[3]:
                 st.subheader("Conversation Summary")
-                if transcript.highlights and transcript.highlights.results:
-                    for result in transcript.highlights.results:
+                if transcript.auto_highlights and transcript.auto_highlights.results:
+                    for result in transcript.auto_highlights.results:
                         st.markdown(f"- {result.text} (found in {len(result.timestamps)} places)")
                 else:
                     st.info("No summary could be generated for this audio.")
             
             # Tab 5: OCR Results (if any)
-            if hasattr(transcript, 'text_extractions') and transcript.text_extractions:
+            if transcript.text_extractions:
                 with tabs[-1]: # Always access the last tab for OCR
                     st.subheader("Detected On-Screen Text (OCR)")
                     for ocr_result in transcript.text_extractions:
