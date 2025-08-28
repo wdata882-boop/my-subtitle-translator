@@ -6,38 +6,125 @@ import subprocess
 
 import streamlit as st
 
+# Use faster-whisper for word-level timestamps
+# pip install faster-whisper
+from faster_whisper import WhisperModel
+
 # Use pydub for audio extraction with explicit ffmpeg path
 # pip install pydub
 from pydub import AudioSegment
 
-# Use AssemblyAI for advanced transcription features
-import assemblyai as aai
-
 # ----------------------------
 # Constants and UI Configuration
 # ----------------------------
-st.set_page_config(layout="wide", page_title="Advanced Subtitle Generator")
+MODEL_SIZES = ["tiny", "base", "small", "medium", "large-v2", "large-v3"]
+DEFAULT_MODEL_SIZE = "base"
+MAX_CHARS_PER_SUB = 60 # Maximum characters per subtitle line
+DEFAULT_BUCKET_SECONDS = 5 # Default duration for subtitle buckets (maximum duration)
+DEFAULT_MIN_SUBTITLE_DURATION = 0.5 # Default minimum duration for a subtitle entry
 
-st.title("Advanced AI Subtitle Generator (using AssemblyAI) 🚀")
+st.set_page_config(layout="wide", page_title="Universal Subtitle Generator")
+
+st.title("Universal Subtitle Generator �")
 st.markdown("""
-    Upload a video file. This app uses the **AssemblyAI API** for:
-    1.  **Fast & Accurate Transcription:** Get highly accurate text from audio.
-    2.  **Speaker Labels:** Automatically detect and label different speakers.
-    3.  **Automatic Summarization:** Generate a summary of the conversation.
-    4.  **SRT File Generation:** Create a perfectly timed subtitle file.
+    Upload a video file to generate a timed SRT subtitle file.
+    This app uses **Faster-Whisper** for fast and accurate transcription, with word-level timestamps.
 """)
 
 # ----------------------------
 # Helper Functions
 # ----------------------------
-def ensure_ffmpeg_access():
-    """Ensures ffmpeg is available."""
+
+@st.cache_resource
+def load_model(model_size: str):
+    """
+    Loads the Faster-Whisper model from cache.
+    """
+    return WhisperModel(model_size, device="cpu") # Can use "cuda" for GPU
+
+def hhmmss_ms(seconds: float) -> str:
+    """
+    Converts seconds to SRT time format HH:MM:SS,mmm
+    """
+    ms = int(round((seconds - int(seconds)) * 1000))
+    total_seconds = int(seconds)
+    h = total_seconds // 3600
+    m = (total_seconds % 3600) // 60
+    s = total_seconds % 60
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+def transcribe_words(_model: WhisperModel, audio_path: str, lang: str = "en"):
+    """
+    Transcribes the audio and returns a list of words with their start/end times.
+    """
     try:
-        subprocess.run(["ffmpeg", "-version"], check=True, capture_output=True)
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        st.error("FFmpeg not found. It's required for audio extraction.")
-        return False
+        segments, info = _model.transcribe(audio_path, language=lang, word_timestamps=True)
+        words = []
+        for segment in segments:
+            for word in segment.words:
+                words.append(word)
+        return words
+    except Exception as e:
+        st.error(f"Transcription failed: {e}")
+        return None
+
+def bucket_words_by_duration(words, bucket_seconds: int = 5, max_chars_per_sub: int = 60, min_subtitle_duration: float = 0.5):
+    """
+    Generates SRT content by grouping words into subtitle lines based on duration and max characters.
+    """
+    srt_content = ""
+    current_subtitle = ""
+    start_time = 0.0
+    subtitle_index = 1
+    
+    for i, word in enumerate(words):
+        # Start a new subtitle if the current one is empty
+        if not current_subtitle:
+            start_time = word.start
+        
+        # Check if adding the next word exceeds the max character limit or duration limit
+        # or if it's the last word
+        next_word_text = word.word.strip()
+        current_subtitle_plus_next = current_subtitle + " " + next_word_text if current_subtitle else next_word_text
+
+        if len(current_subtitle_plus_next) > max_chars_per_sub or \
+           (word.end - start_time) > bucket_seconds or \
+           i == len(words) - 1:
+            
+            end_time = word.end
+            
+            # Ensure minimum duration for the subtitle
+            if (end_time - start_time) < min_subtitle_duration:
+                # If a subtitle is too short, extend its duration slightly
+                end_time = start_time + min_subtitle_duration
+
+            srt_content += f"{subtitle_index}\n"
+            srt_content += f"{hhmmss_ms(start_time)} --> {hhmmss_ms(end_time)}\n"
+            srt_content += f"{current_subtitle.strip()}\n\n"
+            
+            # Reset for the next subtitle
+            current_subtitle = next_word_text
+            start_time = word.start
+            subtitle_index += 1
+            
+        else:
+            # Append the next word
+            current_subtitle = current_subtitle_plus_next
+    
+    # Handle the very last subtitle that wasn't added in the loop
+    if current_subtitle:
+        last_word = words[-1]
+        start_time = words[len(words) - len(current_subtitle.split())].start
+        end_time = last_word.end
+        
+        if (end_time - start_time) < min_subtitle_duration:
+             end_time = start_time + min_subtitle_duration
+        
+        srt_content += f"{subtitle_index}\n"
+        srt_content += f"{hhmmss_ms(start_time)} --> {hhmmss_ms(end_time)}\n"
+        srt_content += f"{current_subtitle.strip()}\n\n"
+
+    return srt_content
 
 def extract_audio_pydub(input_path: str, output_path: str) -> str:
     """Uses pydub to extract mono wav @16kHz."""
@@ -50,113 +137,66 @@ def extract_audio_pydub(input_path: str, output_path: str) -> str:
         st.error(f"Audio extraction failed: {e}. Check if the file is a valid media format.")
         return None
 
-def transcribe_with_assemblyai(audio_path: str):
-    """
-    Transcribes audio using AssemblyAI API and returns the transcript object.
-    """
-    api_key = st.secrets.get("ASSEMBLYAI_API_KEY")
-    if not api_key:
-        st.error("AssemblyAI API Key is not configured in Streamlit Secrets.")
-        st.info("Please add your AssemblyAI API key as a secret named 'ASSEMBLYAI_API_KEY'.")
-        return None
+def main():
+    """Main function for the Streamlit app."""
+    st.sidebar.header("Settings")
+    model_size = st.sidebar.selectbox("Choose Whisper Model Size", MODEL_SIZES, index=MODEL_SIZES.index(DEFAULT_MODEL_SIZE))
+    bucket_seconds = st.sidebar.slider("Max Subtitle Duration (seconds)", min_value=1, max_value=15, value=DEFAULT_BUCKET_SECONDS, step=1)
+    max_chars = st.sidebar.slider("Max Characters per Subtitle", min_value=20, max_value=120, value=MAX_CHARS_PER_SUB, step=5)
+    min_duration_seconds = st.sidebar.slider("Min Subtitle Duration (seconds)", min_value=0.1, max_value=2.0, value=DEFAULT_MIN_SUBTITLE_DURATION, step=0.1)
 
-    aai.settings.api_key = api_key
-    
-    config = aai.TranscriptionConfig(
-        speaker_labels=True,      # Enable speaker diarization
-        auto_highlights=True      # Enable summarization
-    )
+    uploaded_file = st.file_uploader("Upload a video file (MP4, MOV, MKV, etc.)", type=["mp4", "mov", "mkv", "avi", "webm"])
 
-    transcriber = aai.Transcriber()
-    
-    with st.spinner("Uploading audio and transcribing with AssemblyAI... This is usually very fast!"):
-        try:
-            transcript = transcriber.transcribe(audio_path, config)
-        except Exception as e:
-            st.error(f"AssemblyAI transcription failed: {e}")
-            return None
-
-    if transcript.status == aai.TranscriptStatus.error:
-        st.error(f"Transcription failed: {transcript.error}")
-        return None
-    
-    return transcript
-
-# ----------------------------
-# Streamlit App UI
-# ----------------------------
-st.sidebar.header("Instructions")
-st.sidebar.info(
-    """
-    1.  Get your free API key from [AssemblyAI](https://www.assemblyai.com/).
-    2.  In your Streamlit app's settings, add a new secret.
-    3.  Set the secret name to `ASSEMBLYAI_API_KEY` and paste your key as the value.
-    4.  Upload a video and enjoy the advanced features!
-    """
-)
-
-uploaded_file = st.file_uploader("Upload a video file (MP4, MOV, MKV, etc.)", type=["mp4", "mov", "mkv", "avi", "webm"])
-
-if uploaded_file is not None:
-    st.video(uploaded_file)
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        temp_video_path = os.path.join(tmpdir, uploaded_file.name)
-        temp_audio_path = os.path.join(tmpdir, "extracted_audio.wav")
-
-        with open(temp_video_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
+    if uploaded_file is not None:
+        st.video(uploaded_file)
         
-        if not ensure_ffmpeg_access():
-            st.stop()
+        if st.button("Generate Subtitles"):
+            if not ensure_ffmpeg_access():
+                st.stop()
 
-        st.info("Extracting audio from video...")
-        extracted_audio_path = extract_audio_pydub(temp_video_path, temp_audio_path)
-        if extracted_audio_path is None: 
-            st.error("Audio extraction failed. Please check the video file format and ensure FFmpeg is functioning correctly.")
-            st.stop()
+            with tempfile.TemporaryDirectory() as tmpdir:
+                temp_video_path = os.path.join(tmpdir, uploaded_file.name)
+                with open(temp_video_path, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
 
-        transcript = transcribe_with_assemblyai(extracted_audio_path)
+                temp_audio_path = os.path.join(tmpdir, "extracted_audio.wav")
+                st.info("Extracting audio from video...")
+                extracted_audio_path = extract_audio_pydub(temp_video_path, temp_audio_path)
+                
+                if extracted_audio_path is None: 
+                    st.stop()
 
-        if transcript:
-            st.success("Transcription Complete!")
-            
-            # Display results in tabs
-            tab1, tab2, tab3, tab4 = st.tabs(["📄 SRT Subtitles", "📝 Full Transcript", "👥 Speakers", "💡 Summary"])
+                with st.spinner(f"Loading Faster-Whisper model: {model_size} ..."):
+                    model = load_model(model_size=model_size)
 
-            with tab1:
-                st.subheader("SRT Subtitle File")
-                if transcript.text:
-                    srt_content = transcript.export_subtitles_srt()
-                    st.text_area("SRT Content", srt_content, height=300)
-                    
-                    base_name = os.path.splitext(uploaded_file.name)[0]
-                    dl_name = f"{base_name}_subtitles.srt"
-                    st.download_button(
-                        label="Download .SRT File",
-                        data=srt_content.encode("utf-8"),
-                        file_name=dl_name,
-                        mime="text/plain"
+                with st.spinner("Transcribing (word timestamps enabled)... This may take a while depending on audio length and model size."):
+                    words = transcribe_words(_model=model, audio_path=extracted_audio_path) 
+                    if not words:
+                        st.error("No words were detected. Please try a clearer audio or a different model size.")
+                        st.stop()
+
+                with st.spinner("Building SRT with intelligent segmentation..."):
+                    srt_text = bucket_words_by_duration(
+                        words, 
+                        bucket_seconds=bucket_seconds, 
+                        max_chars_per_sub=max_chars, 
+                        min_subtitle_duration=min_duration_seconds
                     )
-                else:
-                    st.info("No transcript found to generate subtitles.")
 
-            with tab2:
-                st.subheader("Full Transcript Text")
-                st.text_area("Full Text", transcript.text, height=300)
+                st.success("Done!")
+                st.subheader("Preview (SRT)")
+                st.text_area("SRT Content", srt_text, height=320)
 
-            with tab3:
-                st.subheader("Transcript by Speaker")
-                if transcript.utterances:
-                    for utterance in transcript.utterances:
-                        st.markdown(f"**Speaker {utterance.speaker}:** {utterance.text}")
-                else:
-                    st.info("No speaker labels were detected in this audio.")
+                base_name = os.path.splitext(uploaded_file.name)[0]
+                dl_name = f"{base_name}_sub.srt"
+                
+                st.download_button(
+                    "Download SRT File",
+                    srt_text.encode("utf-8"),
+                    file_name=dl_name,
+                    mime="text/plain"
+                )
 
-            with tab4:
-                st.subheader("Conversation Summary")
-                if hasattr(transcript, 'highlights') and transcript.highlights:
-                    for result in transcript.highlights.results:
-                        st.markdown(f"- {result.text}")
-                else:
-                    st.info("No summary could be generated for this audio.")
+if __name__ == "__main__":
+    main()
+�
